@@ -1,0 +1,71 @@
+/* Colores y distribución del panel original. */
+:root { --page-background:#e9ecef; --text:#212529; --primary:#0d6efd; }
+[hidden] { display:none !important; }
+body { margin:0; background:var(--page-background); color:var(--text); font-family:system-ui,-apple-system,"Segoe UI",sans-serif; font-size:1.1rem; }
+.site-container { width:calc(100% - 48px); max-width:1400px; margin-inline:auto; }
+.site-navbar { background:#212529; color:#fff; }
+.navbar-content { min-height:61px; display:flex; justify-content:space-between; align-items:center; gap:24px; padding-block:10px; }
+.site-brand { color:#fff; text-decoration:none; font-weight:500; font-size:1.5rem; }
+.site-brand:hover { color:#fff; }
+.session-actions { display:flex; align-items:center; justify-content:flex-end; gap:20px; }
+.session-actions #identity { font-size:1.25rem; }
+.main-content { padding-block:30px 40px; }
+.card { background:#fff; border:1px solid #d0d0d0; border-radius:9px; box-shadow:0 4px 6px rgb(0 0 0 / 5%); }
+.welcome-card { padding:30px; margin-bottom:30px; min-height:173px; }
+.welcome-card h1 { font-size:2.5rem; line-height:1.2; font-weight:500; margin:0 0 12px; }
+.welcome-card p { color:#5e6267; font-size:1.25rem; line-height:1.5; margin:0; }
+.role-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:30px; }
+.role-grid:empty { display:none; }
+.role-card { padding:30px; margin-bottom:30px; border:5px solid var(--primary); }
+.role-card h2 { font-size:1.75rem; font-weight:500; line-height:1.25; margin:0 0 12px; }
+.role-card hr { border:0; border-top:1px solid #c7c7c7; opacity:1; margin:16px 0 22px; }
+.role-description { font-size:1rem; color:#62666c; margin:0 0 20px; }
+.role-feature { border-block:5px solid var(--primary); padding:12px 20px; font-size:1.25rem; margin:0 0 30px; }
+.role-actions { display:grid; gap:10px; margin-top:auto; }
+.role-actions .btn { width:100%; font-size:1.1rem; min-height:47px; border-radius:7px; }
+.btn-kardex { background:#59347a; border:1px solid #59347a; color:#fff; }
+.btn-kardex:hover,.btn-kardex:focus-visible { background:#462760; border-color:#462760; color:#fff; }
+.finance-card { border-color:#ffc107; }
+.finance-card .role-feature { border-color:#ffc107; }
+.warehouse-card { padding:20px; margin-bottom:24px; }
+.warehouse-card h2 { font-size:1.75rem; font-weight:500; margin:0 0 8px; }
+.warehouse-actions { display:flex; flex-wrap:wrap; gap:10px; }
+.warehouse-actions .btn { font-size:1.1rem; padding:9px 14px; }
+.additional-modules { padding:20px; }
+.additional-modules summary { cursor:pointer; font-weight:500; }
+.additional-modules[open] summary { margin-bottom:16px; }
+.login-card { max-width:440px; margin:0 auto; padding:26px; }
+.module-navigation { display:flex; flex-direction:column; align-items:flex-start; gap:18px; margin-bottom:24px; }
+.module-tabs { display:flex; flex-wrap:wrap; gap:8px; }
+.records-card,.editor-card { padding:24px; }
+.records-heading { display:flex; align-items:center; justify-content:space-between; gap:16px; }
+.records-heading h1 { margin:0; }
+.editor-card { margin-top:24px; max-width:900px; }
+.editor-card h2 { margin-bottom:24px; }
+#notice:empty { display:none; }
+#notice { white-space:pre-line; }
+.table { font-size:1rem; }
+.table th { white-space:nowrap; }
+.table td { min-width:100px; }
+.table td:last-child { white-space:nowrap; }
+.form-control,.form-select { font-size:1rem; }
+button:focus-visible,a:focus-visible,summary:focus-visible { outline:3px solid #0d6efd; outline-offset:3px; }
+@media (min-width:1200px) { .site-container { width:89.1%; } }
+@media (max-width:767px) {
+ .site-container { width:calc(100% - 32px); }
+ .navbar-content { align-items:flex-start; flex-direction:column; gap:10px; padding-block:14px; }
+ .site-brand { font-size:1.2rem; }
+ .session-actions { width:100%; justify-content:space-between; gap:12px; }
+ .session-actions #identity { font-size:1rem; }
+ .main-content { padding-top:20px; }
+ .welcome-card { min-height:0; padding:22px; margin-bottom:22px; }
+ .welcome-card h1 { font-size:2rem; }
+ .welcome-card p { font-size:1.05rem; }
+ .role-grid { grid-template-columns:minmax(0,1fr); gap:0; }
+ .role-card { padding:22px; margin-bottom:22px; }
+ .role-card h2,.warehouse-card h2 { font-size:1.4rem; }
+ .role-feature { padding-inline:10px; font-size:1.05rem; }
+ .records-heading { align-items:flex-start; flex-direction:column; }
+ .warehouse-actions { flex-direction:column; align-items:stretch; }
+ .module-tabs .btn { font-size:.9rem; }
+}

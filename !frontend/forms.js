@@ -1,0 +1,96 @@
+ 'use strict';
+
+function requestId() {
+ if (window.crypto.randomUUID) return window.crypto.randomUUID();
+ const bytes = window.crypto.getRandomValues(new Uint8Array(16));
+ bytes[6] = (bytes[6] & 15) | 64; bytes[8] = (bytes[8] & 63) | 128;
+ const hex = [...bytes].map(b=>b.toString(16).padStart(2,'0')).join('');
+ return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
+}
+function searchableSelect(select, label, wrapper) {
+ const search = node('input'); search.type='search'; search.className='form-control mb-2';
+ search.placeholder=`Buscar ${label.toLowerCase()}`;
+ search.setAttribute('aria-label', `Buscar ${label.toLowerCase()}`);
+ const hint = node('p','', 'small text-muted'); hint.setAttribute('aria-live','polite');
+ const choices = [...select.options].map(o=>({value:o.value,text:o.textContent}));
+ const normalize = value=>value.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+ search.oninput=()=>{
+  const text=normalize(search.value.trim());
+  const matches=choices.filter(o=>o.value && normalize(o.text).includes(text));
+  select.replaceChildren();
+  const empty=node('option','Selecciona una opción');empty.value='';select.append(empty);
+  matches.forEach(o=>{const option=node('option',o.text);option.value=o.value;select.append(option);});
+  select.value=''; select.size=text?Math.min(6,Math.max(2,matches.length+1)):1;
+  hint.textContent=matches.length?`${matches.length} coincidencia(s). Selecciona una opción.`:'No hay coincidencias.';
+  select.dispatchEvent(new Event('change'));
+ };
+ select.addEventListener('change',()=>{if(select.value)select.size=1;});
+ wrapper.append(search); return hint;
+}
+
+function scaledAmount(value) {
+ const text=String(value).trim().replace(',','.');
+ if (!/^\d+(\.\d{1,2})?$/.test(text)) return null;
+ const [whole,part='']=text.split('.');return BigInt(whole)*100n+BigInt(part.padEnd(2,'0'));
+}
+function formatSubtotal(quantity, price) {
+ const q=scaledAmount(quantity),p=scaledAmount(price);
+ if(q===null||p===null)return '—';
+ const cents=(q*p+50n)/100n;
+ return `$${(cents/100n).toLocaleString('es-CL')},${(cents%100n).toString().padStart(2,'0')} CLP`;
+}
+function attachReceiptDetails(form, context) {
+ const articles=new Map((context.articles||[]).map(a=>[String(a.id),a.unidad_medida]));
+ const units={unidad:['Unidades','unidad'],m:['Metros','metro'],kg:['Kilogramos','kilogramo'],l:['Litros','litro']};
+ const article=form.elements.namedItem('articulo'), qty=form.elements.namedItem('cantidad'), price=form.elements.namedItem('precio');
+ const box=node('div',undefined,'mb-3');
+ const unit=node('input');unit.readOnly=true;unit.className='form-control';unit.id='receipt-unit';
+ const label=node('label','Unidad del artículo','form-label');label.htmlFor=unit.id;box.append(label,unit);
+ const total=node('p','Subtotal neto —','fw-semibold');total.setAttribute('aria-live','polite');
+ form.append(box,total);
+ const priceLabel=form.querySelector('label[for="field-precio"]');
+ function update(){
+  const code=articles.get(article.value), info=units[code];
+  unit.value=info?info[0]:(code||'Selecciona un artículo');
+  priceLabel.textContent=info?`Precio neto por ${info[1]} (CLP)`:'Precio unitario neto (CLP)';
+  qty.step=code==='unidad'?'1':'0.01';qty.min=code==='unidad'?'1':'0.01';
+  total.textContent=`Subtotal neto ${formatSubtotal(qty.value,price.value)}`;
+ }
+ article.addEventListener('change',update);qty.addEventListener('input',update);price.addEventListener('input',update);update();
+}
+function showForm(fields, item={}) {
+ const resource=current, editId=item.id||null, context=metadata;
+ $('editor').hidden=false; $('editor-title').textContent=editId?'Editar registro':resource==='ingresos'?'Registrar ingreso':'Nuevo registro';
+ const form=$('edit-form');form.replaceChildren();
+ for(const field of fields){
+  const wrap=node('div',undefined,'mb-3'), id=`field-${field.name}`;let input;
+  if(field.type==='select'){
+   input=node('select');field.choices.forEach(([value,label])=>{const option=node('option',label);option.value=value;input.append(option);});
+  }else{input=node('input');input.type=field.type;if(field.type==='number')input.step=field.step||'0.01';}
+  input.name=field.name;input.id=id;input.required=field.required;
+  input.className=field.type==='checkbox'?'form-check-input':'form-control';
+  if(field.maxLength)input.maxLength=field.maxLength;
+  if(field.min!==undefined)input.min=field.min;if(field.max!==undefined)input.max=field.max;
+  if(field.type==='checkbox')input.checked=!!item[field.name];
+  else input.value=item[field.name]??(field.name==='solicitud_id'?requestId():'');
+  if(field.type==='hidden')wrap.hidden=true;
+  else{const label=node('label',field.label,'form-label');label.htmlFor=id;wrap.append(label);}
+  let hint;
+  if(resource==='ingresos' && ['factura','articulo'].includes(field.name))hint=searchableSelect(input,field.label,wrap);
+  wrap.append(input);if(hint)wrap.append(hint);form.append(wrap);
+ }
+ if(resource==='ingresos')attachReceiptDetails(form,context);
+ const submit=node('button',resource==='ingresos'?'Confirmar ingreso':'Guardar','btn btn-primary');submit.type='submit';
+ const cancel=node('button','Cancelar','btn btn-outline-secondary ms-2');cancel.type='button';cancel.onclick=()=>{$('editor').hidden=true;};
+ form.append(submit,cancel);
+ let submitting=false;
+ form.onsubmit=async event=>{
+  event.preventDefault();if(submitting)return;submitting=true;submit.disabled=true;
+  const payload={};fields.forEach(f=>{const input=form.elements.namedItem(f.name);payload[f.name]=f.type==='checkbox'?input.checked:input.value;});
+  try{
+   await api(`${resource}/${editId?editId+'/':''}`,payload);
+   if(current===resource){await load(resource);notice('Registro guardado.');}
+  }catch(e){notice(e.message,true);}finally{submitting=false;submit.disabled=false;}
+ };
+ $('editor').scrollIntoView({behavior:'smooth'});
+}

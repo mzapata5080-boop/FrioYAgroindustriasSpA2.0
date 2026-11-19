@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Frío y Agroindustria SpA</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=2">
+  <script src="config.js"></script>
+  <script src="dashboard.js?v=3" defer></script>
+  <script src="forms.js?v=3" defer></script>
+  <script src="app.js?v=3" defer></script>
+</head>
+<body>
+  <nav class="site-navbar" aria-label="Navegación principal">
+    <div class="site-container navbar-content">
+      <a id="home" class="site-brand" href="#">Frío y Agroindustria SpA</a>
+      <div class="session-actions">
+        <span id="identity"></span>
+        <button id="logout" class="btn btn-outline-light" hidden>Cerrar Sesión</button>
+      </div>
+    </div>
+  </nav>
+  <main class="site-container main-content">
+    <div id="notice" role="status" aria-live="polite"></div>
+    <section id="login-panel" class="card login-card">
+      <h1 class="h3">Iniciar sesión</h1>
+      <form id="login-form">
+        <label class="form-label" for="username">Usuario</label>
+        <input id="username" name="username" class="form-control mb-3" autocomplete="username" required>
+        <label class="form-label" for="password">Contraseña</label>
+        <input id="password" name="password" type="password" class="form-control mb-3" autocomplete="current-password" required>
+        <button class="btn btn-primary">Ingresar</button>
+      </form>
+    </section>
+    <section id="workspace" hidden>
+      <section id="dashboard" aria-label="Panel de control">
+        <div class="card welcome-card">
+          <h1 id="welcome">Bienvenido,</h1>
+          <p>Panel de control (Sprint 1). Sus funciones están habilitadas según su rol en la empresa.</p>
+        </div>
+        <div id="role-cards" class="role-grid"></div>
+        <section class="card warehouse-card" aria-labelledby="warehouse-title">
+          <h2 id="warehouse-title">Bodega</h2>
+          <div id="warehouse-actions" class="warehouse-actions"></div>
+        </section>
+        <details id="additional-modules" class="card additional-modules" hidden>
+          <summary>Gestión comercial</summary>
+          <div id="additional-actions" class="warehouse-actions"></div>
+        </details>
+      </section>
+      <section id="module-view" hidden>
+        <div class="module-navigation">
+          <button id="back" class="btn btn-outline-secondary">← Volver al panel</button>
+          <nav id="modules" class="module-tabs" aria-label="Módulos"></nav>
+        </div>
+        <div class="card records-card">
+          <div class="records-heading">
+            <h1 class="h3" id="section-title">Selecciona un módulo</h1>
+            <button id="new" class="btn btn-success" hidden>Nuevo registro</button>
+          </div>
+          <div id="records" class="table-responsive mt-3"></div>
+        </div>
+        <section id="editor" class="card editor-card" hidden>
+          <h2 class="h4" id="editor-title"></h2>
+          <form id="edit-form"></form>
+        </section>
+      </section>
+    </section>
+  </main>
+</body>
+</html>
