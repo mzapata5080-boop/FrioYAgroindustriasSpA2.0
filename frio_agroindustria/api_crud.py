@@ -5,6 +5,7 @@ from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
 from usuarios.forms import TrabajadorEditarForm
 from frio_agroindustria.api_common import error, data, allowed, schema, serialize
+from frio_agroindustria.common import registrar_cambio, snapshot_instance
 from frio_agroindustria.api_resources import RESOURCES
 from inventario.api import movements
 
@@ -24,7 +25,9 @@ def collection(request,resource):
         form.add_error('monto','El monto debe ser mayor que cero.')
     if not form.is_valid(): return JsonResponse({'errors':form.errors},status=400)
     try:
-        with transaction.atomic(): obj=form.save()
+        with transaction.atomic():
+            obj=form.save()
+            registrar_cambio(request.user, 'CREAR', obj)
     except IntegrityError: return error('El registro ya existe o tiene referencias inválidas.')
     return JsonResponse({'item':serialize(obj)},status=201)
 
@@ -42,18 +45,24 @@ def detail(request,resource,pk):
     if d.pop('_delete',False):
         if resource not in ('clientes','trabajadores'): return error('No se permite eliminar este tipo de registro.',403)
         if resource=='trabajadores' and obj.pk==request.user.pk: return error('No puedes eliminar tu propia cuenta.')
+        antes = snapshot_instance(obj)
+        obj_pk = obj.pk
         try: obj.delete()
         except ProtectedError: return error('Hay registros asociados; no se puede eliminar.')
+        obj.pk = obj_pk
+        registrar_cambio(request.user, 'ELIMINAR', obj, antes=antes)
         return JsonResponse({'ok':True})
     try:
         with transaction.atomic():
             obj = model.objects.select_for_update().get(pk=pk)
+            antes = snapshot_instance(obj)
             form = formclass(d, instance=obj)
             if resource == 'facturas' and form.is_valid() and form.cleaned_data['monto'] <= 0:
                 form.add_error('monto', 'El monto debe ser mayor que cero.')
             if not form.is_valid():
                 return JsonResponse({'errors': form.errors}, status=400)
             obj = form.save()
+            registrar_cambio(request.user, 'EDITAR', obj, antes=antes)
     except model.DoesNotExist:
         return error('Registro no encontrado.', 404)
     except IntegrityError:
