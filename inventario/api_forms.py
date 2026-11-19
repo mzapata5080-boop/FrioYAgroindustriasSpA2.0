@@ -48,3 +48,17 @@ class IngresoForm(forms.Form):
             self.add_error('cantidad','Debe ser una cantidad entera para artículos por unidad.')
         return d
 
+
+
+class SalidaForm(forms.Form):
+    solicitud_id = forms.UUIDField(widget=forms.HiddenInput)
+    articulo = forms.ModelChoiceField(queryset=Repuesto.objects.all())
+    cantidad = forms.DecimalField(max_digits=15, decimal_places=2, min_value=Decimal('0.01'))
+    numero_ot = forms.CharField(label='Orden de trabajo / obra', max_length=50)
+
+    def clean(self):
+        values = super().clean()
+        article, quantity = values.get('articulo'), values.get('cantidad')
+        if article and quantity and article.unidad_medida == 'unidad' and quantity != quantity.to_integral_value():
+            self.add_error('cantidad', 'Debe ser una cantidad entera para artículos por unidad.')
+        return values

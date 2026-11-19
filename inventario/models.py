@@ -21,6 +21,10 @@ class MovimientoBodega(models.Model):
     fecha_registro = models.DateTimeField(auto_now_add=True)
     numero_ot = models.CharField(max_length=50, blank=True)
     repuesto = models.ForeignKey(Repuesto, on_delete=models.PROTECT)
+    costo_total_fifo = models.DecimalField(max_digits=25, decimal_places=2, null=True, blank=True)
+    responsable = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT, null=True, blank=True)
+    # Identificador del envío: reintentar una salida no debe consumir dos veces.
+    solicitud_salida = models.UUIDField(null=True, blank=True, unique=True)
 
 class RecepcionIngreso(models.Model):
     solicitud_id = models.UUIDField(primary_key=True)
@@ -31,5 +35,10 @@ class RecepcionIngreso(models.Model):
     precio_unitario_neto = models.DecimalField(max_digits=12, decimal_places=2)
     subtotal_neto = models.DecimalField(max_digits=25, decimal_places=2)
 
+    cantidad_disponible = models.DecimalField(max_digits=15, decimal_places=2)
+
     class Meta:
         db_table = "recepciones_ingreso"
+        constraints = [
+            models.CheckConstraint(condition=models.Q(cantidad_disponible__gte=0), name='fyag_lote_saldo_no_negativo'),
+        ]

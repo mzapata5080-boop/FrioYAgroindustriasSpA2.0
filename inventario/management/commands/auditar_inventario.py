@@ -11,9 +11,9 @@ class Command(BaseCommand):
             'inventario_categoriarepuesto': {'id', 'nombre'},
             'inventario_repuesto': {'id', 'codigo_parte', 'descripcion', 'ubicacion_bodega',
                 'unidad_medida', 'stock_actual', 'stock_minimo', 'categoria_id'},
-            'inventario_movimientobodega': {'id', 'tipo', 'cantidad', 'fecha_registro', 'numero_ot', 'repuesto_id'},
+            'inventario_movimientobodega': {'id', 'tipo', 'cantidad', 'fecha_registro', 'numero_ot', 'repuesto_id', 'costo_total_fifo', 'responsable_id', 'solicitud_salida'},
             'recepciones_ingreso': {'solicitud_id', 'factura_id', 'movimiento_id', 'responsable_id',
-                'unidad_medida', 'precio_unitario_neto', 'subtotal_neto'},
+                'unidad_medida', 'precio_unitario_neto', 'subtotal_neto', 'cantidad_disponible'},
         }
         problems = []
         with connection.cursor() as cursor:

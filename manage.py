@@ -15,6 +15,14 @@ def main():
             "available on your PYTHONPATH environment variable? Did you "
             "forget to activate a virtual environment?"
         ) from exc
+    # Respetar --settings ANTES de cargar settings y evaluar el bloqueo.
+    # Django normalmente procesa esta opción dentro de execute_from_command_line.
+    from argparse import ArgumentParser
+    parser = ArgumentParser(add_help=False)
+    parser.add_argument('--settings')
+    options, _ = parser.parse_known_args(sys.argv[1:])
+    if options.settings:
+        os.environ['DJANGO_SETTINGS_MODULE'] = options.settings
     from django.conf import settings
     if settings.DATABASE_MODE == 'supabase' and len(sys.argv) > 1 and sys.argv[1] in ('migrate', 'flush', 'test'):
         raise SystemExit('Base Supabase existente: comando bloqueado para proteger sus datos. Para pruebas locales usa DATABASE_MODE=sqlite.')

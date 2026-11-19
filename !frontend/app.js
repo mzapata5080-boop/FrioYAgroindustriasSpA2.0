@@ -12,7 +12,7 @@ async function api(path, payload) {
 }
 $('back').onclick=goHome;
 $('home').onclick=event=>{event.preventDefault();if(user)goHome();};
-const hiddenColumns=new Set(['password','solicitud_id']);
+const hiddenColumns=new Set(['password','solicitud_id','solicitud_salida']);
 async function load(resource) {
  const version = ++loadVersion;
  const response = await api(`${resource}/`);
@@ -25,10 +25,10 @@ async function load(resource) {
  const keys=items.length?Object.keys(items[0]).filter(k=>!hiddenColumns.has(k)):[];
  const labels={...Object.fromEntries((metadata.fields||[]).map(f=>[f.name,f.label])), responsable_id:'ID trabajador', responsable:'Trabajador', unidad_medida:'Unidad', articulo:'Artículo', fecha_registro:'Fecha y hora'};
  keys.forEach(k=>tr.append(node('th',labels[k]||k.replaceAll('_',' '))));
- if(metadata.can_write&&resource!=='ingresos')tr.append(node('th','Acciones'));
+ if(metadata.can_write&&!['ingresos','salidas','kardex'].includes(resource))tr.append(node('th','Acciones'));
  head.append(tr);table.append(head);const tbody=node('tbody');
  items.forEach(item=>{const row=node('tr');keys.forEach(k=>row.append(node('td',typeof item[k]==='boolean'?(item[k]?'Sí':'No'):(k==='fecha_registro' ? new Date(item[k]).toLocaleString('es-CL') : (item[k]??'—')))));
- if(metadata.can_write&&resource!=='ingresos'){
+ if(metadata.can_write&&!['ingresos','salidas','kardex'].includes(resource)){
  const actions=node('td'); const b=node('button','Editar','btn btn-sm btn-outline-primary');b.onclick=async()=>{try{const d=await api(`${resource}/${item.id}/`);showForm(d.fields,d.item);}catch(e){notice(e.message,true);}};actions.append(b);
  if(metadata.can_delete){const del=node('button','Eliminar','btn btn-sm btn-outline-danger ms-2');del.onclick=async()=>{if(!confirm('¿Eliminar este registro?'))return;try{await api(`${resource}/${item.id}/`,{_delete:true});await load(resource);notice('Registro eliminado.');}catch(e){notice(e.message,true);}};actions.append(del);}row.append(actions);}
  tbody.append(row);});table.append(tbody);$('records').replaceChildren(items.length?table:node('p','No hay registros.','text-muted'));

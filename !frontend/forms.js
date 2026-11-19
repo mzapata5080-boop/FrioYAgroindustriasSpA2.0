@@ -72,7 +72,7 @@ function showForm(fields, item={}) {
   if(field.maxLength)input.maxLength=field.maxLength;
   if(field.min!==undefined)input.min=field.min;if(field.max!==undefined)input.max=field.max;
   if(field.type==='checkbox')input.checked=!!item[field.name];
-  else input.value=item[field.name]??(field.name==='solicitud_id'?requestId():'');
+  else input.value=item[field.name]??(field.name==='solicitud_id'?requestId():(field.initial??''));
   if(field.type==='hidden')wrap.hidden=true;
   else{const label=node('label',field.label,'form-label');label.htmlFor=id;wrap.append(label);}
   let hint;
