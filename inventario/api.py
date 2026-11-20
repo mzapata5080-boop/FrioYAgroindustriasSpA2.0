@@ -53,8 +53,8 @@ def movements(request, resource):
             'fields': schema(IngresoForm() if resource == 'ingresos' else SalidaForm()) if resource != 'kardex' else [],
             'can_write': resource in ('ingresos', 'salidas'), 'can_delete': False,
         }
-        if resource == 'ingresos':
-            result['articles'] = list(Repuesto.objects.values('id', 'unidad_medida'))
+        if resource in ('ingresos', 'salidas'):
+            result['articles'] = list(Repuesto.objects.filter(activo=True).values('id', 'codigo_parte', 'descripcion', 'unidad_medida', 'stock_actual'))
         return JsonResponse(result)
     if resource == 'salidas':
         return registrar_salida(request)

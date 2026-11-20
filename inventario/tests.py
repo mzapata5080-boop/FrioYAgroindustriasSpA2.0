@@ -166,3 +166,107 @@ class InventoryApiTests(TestCase):
         call_command('auditar_inventario', stdout=output)
         self.assertIn('Estructura revisada', output.getvalue())
         self.assertEqual(before, (Repuesto.objects.count(), MovimientoBodega.objects.count(), RecepcionIngreso.objects.count()))
+
+    def test_article_creation_defaults_to_zero_stock_and_active(self):
+        payload = {
+            'codigo_parte': 'VAL-01',
+            'descripcion': 'Válvula de bola',
+            'ubicacion_bodega': 'Estante 4',
+            'unidad_medida': 'unidad',
+            'categoria': self.category.pk,
+            'stock_minimo': '2',
+        }
+        response = self.client.post('/api/articulos/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(response.status_code, 201)
+        created = Repuesto.objects.get(codigo_parte='VAL-01')
+        self.assertEqual(created.stock_actual, 0)
+        self.assertTrue(created.activo)
+        self.assertEqual(created.stock_minimo, Decimal('2'))
+
+        # Check it immediately appears in ingresos choices and articles list
+        ingresos_res = self.client.get('/api/ingresos/').json()
+        article_ids = [a['id'] for a in ingresos_res['articles']]
+        self.assertIn(created.pk, article_ids)
+
+    def test_duplicate_article_code_rejected(self):
+        payload = {
+            'codigo_parte': self.article.codigo_parte,
+            'descripcion': 'Otro clavo',
+            'ubicacion_bodega': 'B',
+            'unidad_medida': 'kg',
+            'categoria': self.category.pk,
+            'stock_minimo': '0',
+        }
+        response = self.client.post('/api/articulos/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('codigo_parte', response.json().get('errors', {}))
+
+    def test_unauthorized_role_cannot_modify_catalog(self):
+        self.client.force_login(self.finance)
+        payload = {
+            'codigo_parte': 'FIN-01',
+            'descripcion': 'Intento no autorizado',
+            'ubicacion_bodega': 'X',
+            'unidad_medida': 'unidad',
+            'categoria': self.category.pk,
+            'stock_minimo': '0',
+        }
+        res_article = self.client.post('/api/articulos/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res_article.status_code, 403)
+
+        res_cat = self.client.post('/api/categorias/', data=json.dumps({'nombre': 'Nueva Cat'}), content_type='application/json')
+        self.assertEqual(res_cat.status_code, 403)
+
+    def test_article_activation_and_deactivation(self):
+        # Deactivate article
+        response = self.client.post(f'/api/articulos/{self.article.pk}/', data=json.dumps({'activo': False}), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.article.refresh_from_db()
+        self.assertFalse(self.article.activo)
+
+        # Reactivate article
+        response = self.client.post(f'/api/articulos/{self.article.pk}/', data=json.dumps({'activo': True}), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.article.refresh_from_db()
+        self.assertTrue(self.article.activo)
+
+    def test_category_activation_and_deactivation(self):
+        response = self.client.post(f'/api/categorias/{self.category.pk}/', data=json.dumps({'activo': False}), content_type='application/json')
+        self.assertEqual(response.status_code, 200)
+        self.category.refresh_from_db()
+        self.assertFalse(self.category.activo)
+
+    def test_new_category_is_active_by_default_and_form_advertises_default(self):
+        fields = self.client.get('/api/categorias/').json()['fields']
+        active = next(field for field in fields if field['name'] == 'activo')
+        self.assertTrue(active['initial'])
+        response = self.client.post('/api/categorias/', data=json.dumps({'nombre': 'Refrigeración', 'activo': active['initial']}), content_type='application/json')
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertTrue(CategoriaRepuesto.objects.get(nombre='Refrigeración').activo)
+
+    def test_article_list_includes_category_name_and_unit_display(self):
+        res = self.client.get('/api/articulos/').json()
+        items = res['items']
+        self.assertTrue(len(items) > 0)
+        art = next(x for x in items if x['id'] == self.article.pk)
+        self.assertEqual(art['categoria_nombre'], self.category.nombre)
+        self.assertEqual(art['unidad_medida_display'], 'Kilogramos')
+        self.assertEqual(art['codigo_parte'], 'CL-01')
+
+    def test_solicitudes_staged_endpoint(self):
+        res_get = self.client.get('/api/solicitudes/')
+        self.assertEqual(res_get.status_code, 200)
+        data_get = res_get.json()
+        self.assertTrue(data_get['can_write'])
+        self.assertIn('notice', data_get)
+
+        payload = {
+            'solicitud_id': str(uuid.uuid4()),
+            'numero_ot': 'OT-2026-001',
+            'articulo': self.article.pk,
+            'cantidad': '5.00',
+            'fecha_requerida': '2026-11-25',
+        }
+        res_post = self.client.post('/api/solicitudes/', data=json.dumps(payload), content_type='application/json')
+        self.assertEqual(res_post.status_code, 501)
+        self.assertIn('21/11', res_post.json().get('error', ''))

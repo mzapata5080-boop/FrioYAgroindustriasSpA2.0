@@ -3,16 +3,18 @@ from django.conf import settings
 
 class CategoriaRepuesto(models.Model):
     nombre = models.CharField(max_length=100)
+    activo = models.BooleanField(default=True, verbose_name='Activo')
     def __str__(self): return self.nombre
 
 class Repuesto(models.Model):
-    codigo_parte = models.CharField(max_length=50, unique=True)
-    descripcion = models.CharField(max_length=200)
-    ubicacion_bodega = models.CharField(max_length=50)
-    unidad_medida = models.CharField(max_length=20, choices=[('unidad','Unidades'),('m','Metros'),('kg','Kilogramos'),('l','Litros')])
-    stock_actual = models.DecimalField(max_digits=15, decimal_places=2, default=0)
-    stock_minimo = models.DecimalField(max_digits=15, decimal_places=2, default=0)
-    categoria = models.ForeignKey(CategoriaRepuesto, on_delete=models.PROTECT)
+    codigo_parte = models.CharField(max_length=50, unique=True, verbose_name='Código interno')
+    descripcion = models.CharField(max_length=200, verbose_name='Nombre')
+    ubicacion_bodega = models.CharField(max_length=50, verbose_name='Ubicación')
+    unidad_medida = models.CharField(max_length=20, choices=[('unidad','Unidades'),('m','Metros'),('kg','Kilogramos'),('l','Litros')], verbose_name='Unidad')
+    stock_actual = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name='Stock actual')
+    stock_minimo = models.DecimalField(max_digits=15, decimal_places=2, default=0, verbose_name='Stock mínimo')
+    categoria = models.ForeignKey(CategoriaRepuesto, on_delete=models.PROTECT, verbose_name='Categoría')
+    activo = models.BooleanField(default=True, verbose_name='Activo')
     def __str__(self): return f'{self.codigo_parte} — {self.descripcion}'
 
 class MovimientoBodega(models.Model):

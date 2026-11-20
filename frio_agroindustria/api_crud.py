@@ -2,6 +2,7 @@
 from django.db import IntegrityError, transaction
 from django.db.models.deletion import ProtectedError
 from django.http import JsonResponse
+from django.forms.models import model_to_dict
 from django.views.decorators.http import require_http_methods
 from usuarios.forms import TrabajadorEditarForm
 from frio_agroindustria.api_common import error, data, allowed, schema, serialize
@@ -14,12 +15,34 @@ def collection(request,resource):
     if not request.user.is_authenticated: return error('Inicia sesión.',401)
     if resource in ('ingresos','salidas','kardex'):
         return movements(request,resource)
+    if resource == 'solicitudes':
+        roles = ('bodega', 'gerencia', 'supervisor de obra', 'supervisor')
+        if not allowed(request.user, roles):
+            return error('No tienes permisos.', 403)
+        from inventario.api_forms import SolicitudMaterialForm
+        from inventario.models import Repuesto
+        if request.method == 'GET':
+            return JsonResponse({
+                'items': [],
+                'fields': schema(SolicitudMaterialForm()),
+                'can_write': True,
+                'can_delete': False,
+                'articles': list(Repuesto.objects.filter(activo=True).values('id', 'codigo_parte', 'descripcion', 'unidad_medida', 'stock_actual')),
+                'notice': 'Pantalla de Solicitudes preparada según los campos acordados con Benjamín. La persistencia en Supabase se conectará el 21/11.'
+            })
+        form = SolicitudMaterialForm(data(request))
+        if not form.is_valid():
+            return JsonResponse({'errors': form.errors}, status=400)
+        return error('Conexión pendiente: El guardado definitivo en base compartida de Obras y Solicitudes se completará el sábado 21/11 tras aplicar la migración 0003.', status=501)
     if resource not in RESOURCES: return error('Recurso no encontrado.',404)
     model,formclass,roles=RESOURCES[resource]
     read_stock=resource=='articulos' and request.method=='GET'
     if not read_stock and not allowed(request.user,roles): return error('No tienes permisos.',403)
     if request.method=='GET':
-        return JsonResponse({'items':[serialize(x) for x in model.objects.order_by('pk')], 'fields':schema(formclass()),'can_write':allowed(request.user,roles),'can_delete':resource in ('clientes','trabajadores')})
+        qs = model.objects.order_by('pk')
+        if resource == 'articulos':
+            qs = qs.select_related('categoria')
+        return JsonResponse({'items':[serialize(x) for x in qs], 'fields':schema(formclass()),'can_write':allowed(request.user,roles),'can_delete':resource in ('clientes','trabajadores')})
     form=formclass(data(request))
     if resource=='facturas' and form.is_valid() and form.cleaned_data['monto']<=0:
         form.add_error('monto','El monto debe ser mayor que cero.')
@@ -56,7 +79,9 @@ def detail(request,resource,pk):
         with transaction.atomic():
             obj = model.objects.select_for_update().get(pk=pk)
             antes = snapshot_instance(obj)
-            form = formclass(d, instance=obj)
+            merged = model_to_dict(obj)
+            merged.update(d)
+            form = formclass(merged, instance=obj)
             if resource == 'facturas' and form.is_valid() and form.cleaned_data['monto'] <= 0:
                 form.add_error('monto', 'El monto debe ser mayor que cero.')
             if not form.is_valid():

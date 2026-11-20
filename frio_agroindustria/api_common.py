@@ -7,7 +7,7 @@ from django.http import JsonResponse, HttpResponse
 from django.forms.models import model_to_dict
 from usuarios.models import Trabajador
 from finanzas.models import FacturaCompra
-from inventario.models import MovimientoBodega, RecepcionIngreso
+from inventario.models import MovimientoBodega, RecepcionIngreso, Repuesto
 
 class CorsMiddleware:
     def __init__(self, get_response): self.get_response = get_response
@@ -49,6 +49,8 @@ def schema(form):
         elif isinstance(f,forms.EmailField): kind='email'
         elif hasattr(f,'choices'): kind='select'
         item={'name':name,'label':str(f.label or name.replace('_',' ').capitalize()),'type':kind,'required':f.required}
+        if f.initial is not None and kind not in ('hidden', 'password'):
+            item['initial'] = f.initial
         if kind=='select': item['choices']=[[str(k),str(v)] for k,v in f.choices]
         if isinstance(f, forms.DecimalField):
             item['step'] = str(Decimal(1).scaleb(-f.decimal_places))
@@ -62,6 +64,10 @@ def serialize(obj):
     if isinstance(obj,Trabajador):
         return {**profile(obj),'first_name':obj.first_name,'last_name':obj.last_name,'email':obj.email,'rut':obj.rut,'telefono':obj.telefono,'is_active':obj.is_active,'rol':obj.groups.first().name if obj.groups.exists() else ''}
     d=model_to_dict(obj)
+    if isinstance(obj, Repuesto):
+        d['categoria_id'] = obj.categoria_id
+        d['categoria_nombre'] = obj.categoria.nombre if obj.categoria else '—'
+        d['unidad_medida_display'] = obj.get_unidad_medida_display()
     if isinstance(obj,FacturaCompra): d['proveedor_nombre']=str(obj.proveedor)
     if isinstance(obj,MovimientoBodega):
         d.update(fecha_registro=obj.fecha_registro,articulo=str(obj.repuesto))

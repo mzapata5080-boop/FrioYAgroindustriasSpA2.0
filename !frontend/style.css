@@ -27,6 +27,10 @@ body { margin:0; background:var(--page-background); color:var(--text); font-fami
 .btn-kardex:hover,.btn-kardex:focus-visible { background:#462760; border-color:#462760; color:#fff; }
 .finance-card { border-color:#ffc107; }
 .finance-card .role-feature { border-color:#ffc107; }
+.supervisor-card { border-color:#0dcaf0; }
+.supervisor-card .role-feature { border-color:#0dcaf0; }
+.records-filter-bar { background:#f8f9fa; border:1px solid #dee2e6; border-radius:6px; padding:12px 16px; }
+.search-group { max-width:500px; }
 .warehouse-card { padding:20px; margin-bottom:24px; }
 .warehouse-card h2 { font-size:1.75rem; font-weight:500; margin:0 0 8px; }
 .warehouse-actions { display:flex; flex-wrap:wrap; gap:10px; }
@@ -68,4 +72,7 @@ button:focus-visible,a:focus-visible,summary:focus-visible { outline:3px solid #
  .records-heading { align-items:flex-start; flex-direction:column; }
  .warehouse-actions { flex-direction:column; align-items:stretch; }
  .module-tabs .btn { font-size:.9rem; }
+ .records-filter-bar .d-flex { flex-direction:column; align-items:stretch !important; }
+ .search-group { max-width:100%; width:100%; }
+ #table-status-filter { width:100% !important; }
 }
