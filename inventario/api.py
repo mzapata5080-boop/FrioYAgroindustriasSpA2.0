@@ -5,7 +5,7 @@ from django.core.exceptions import ValidationError
 from django.http import JsonResponse
 from frio_agroindustria.api_common import allowed, error, data, schema, serialize as base_serialize
 from inventario.api_forms import IngresoForm, SalidaForm
-from inventario.fifo import consumir_fifo
+from inventario.fifo import registrar_salida_fifo, ConflictoSolicitudFIFO
 from inventario.models import MovimientoBodega, RecepcionIngreso, Repuesto
 
 
@@ -21,6 +21,26 @@ def serialize(movement):
                 'cantidad_disponible',)})
         except RecepcionIngreso.DoesNotExist:
             pass
+    if movement.tipo == 'SALIDA':
+        detalles = list(movement.detalles_fifo.all())
+        row['detalles_fifo'] = [
+            {'id': detalle.pk, 'orden': detalle.orden, 'lote_id': detalle.lote_id,
+             'ingreso_id': detalle.lote.movimiento_id, 'cantidad': detalle.cantidad,
+             'precio_unitario': detalle.precio_unitario, 'costo_asignado': detalle.costo_asignado}
+            for detalle in detalles
+        ]
+        row['detalle_fifo_estado'] = 'registrado' if detalles else 'historico_sin_detalle'
+    if movement.tipo == 'DEVOLUCION':
+        registro = movement.devolucion_fifo
+        row.update(consumo_origen_id=registro.consumo_id,
+            salida_origen_id=registro.consumo.salida_id,
+            lote_origen_id=registro.consumo.lote_id,
+            costo_reintegrado_fifo=registro.costo_reintegrado)
+    if movement.tipo == 'DEVOLUCION':
+        registro = movement.devolucion_fifo
+        row.update(consumo_original_id=registro.consumo_id,
+            salida_original_id=registro.consumo.salida_id, lote_original_id=registro.consumo.lote_id,
+            costo_reintegrado=registro.costo_reintegrado)
     return row
 
 
@@ -44,8 +64,8 @@ def movements(request, resource):
         return error('No tienes permisos.', 403)
     if request.method == 'GET':
         qs = MovimientoBodega.objects.select_related(
-            'repuesto', 'responsable', 'recepcioningreso__responsable'
-        ).order_by('-fecha_registro', '-pk')
+            'repuesto', 'responsable', 'recepcioningreso__responsable', 'devolucion_fifo__consumo'
+        ).prefetch_related('detalles_fifo__lote').order_by('-fecha_registro', '-pk')
         if resource != 'kardex':
             qs = qs.filter(tipo='INGRESO' if resource == 'ingresos' else 'SALIDA')
         result = {
@@ -103,14 +123,6 @@ def movements(request, resource):
     return JsonResponse({'item': serialize(movement)}, status=201)
 
 
-def salida_repetida(movimiento, values, user):
-    if not (movimiento.responsable_id == user.pk
-            and movimiento.repuesto_id == values['articulo'].pk
-            and movimiento.cantidad == values['cantidad']
-            and movimiento.numero_ot == values['numero_ot']):
-        return error('La solicitud ya fue usada con otros datos. Abre una salida nueva.', 409)
-    return JsonResponse({'ok': True, 'repeated': True, 'item': serialize(movimiento)})
-
 
 def registrar_salida(request):
     form = SalidaForm(data(request))
@@ -118,31 +130,20 @@ def registrar_salida(request):
         return JsonResponse({'errors': form.errors}, status=400)
     values = form.cleaned_data
     try:
-        with transaction.atomic():
-            article = Repuesto.objects.select_for_update().get(pk=values['articulo'].pk)
-            previous = MovimientoBodega.objects.filter(solicitud_salida=values['solicitud_id']).first()
-            if previous:
-                return salida_repetida(previous, values, request.user)
-            quantity = values['cantidad']
-            if article.unidad_medida == 'unidad' and quantity != quantity.to_integral_value():
-                return error('Debe ser una cantidad entera para artículos por unidad.')
-            if article.stock_actual < quantity:
-                return error('No hay stock suficiente para registrar la salida.')
-            cost = consumir_fifo(article, quantity)
-            movement = MovimientoBodega.objects.create(
-                tipo='SALIDA', cantidad=quantity, repuesto=article,
-                numero_ot=values['numero_ot'], costo_total_fifo=cost,
-                responsable=request.user, solicitud_salida=values['solicitud_id'],
-            )
-            article.stock_actual -= quantity
-            article.save(update_fields=['stock_actual'])
+        resultado = registrar_salida_fifo(
+            articulo_id=values['articulo'].pk, cantidad=values['cantidad'],
+            numero_ot=values['numero_ot'], responsable_id=request.user.pk,
+            solicitud_id=values['solicitud_id'],
+        )
+    except ConflictoSolicitudFIFO as exc:
+        return error(' '.join(exc.messages), 409)
     except ValidationError as exc:
         return error(' '.join(exc.messages))
     except Repuesto.DoesNotExist:
         return error('El artículo ya no existe. Actualiza la lista.')
     except IntegrityError:
-        previous = MovimientoBodega.objects.filter(solicitud_salida=values['solicitud_id']).first()
-        if previous:
-            return salida_repetida(previous, values, request.user)
         return error('No se pudo registrar la salida. Revisa los datos.')
-    return JsonResponse({'item': serialize(movement)}, status=201)
+    payload = {'item': serialize(resultado.movimiento)}
+    if resultado.repetida:
+        payload.update(ok=True, repeated=True)
+    return JsonResponse(payload, status=200 if resultado.repetida else 201)

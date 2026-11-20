@@ -65,7 +65,7 @@ function attachReceiptDetails(form, context) {
  function update() {
   const code = articles.get(article.value), info = units[code];
   unit.value = info ? info[0] : (code || 'Selecciona un artículo');
-  if (priceLabel) priceLabel.textContent = info ? `Precio neto por ${info[1]} (CLP)` : 'Precio unitario neto (CLP)';
+  if (priceLabel) priceLabel.textContent = info ? `Costo neto de compra por ${info[1]} (CLP)` : 'Costo unitario neto de compra (CLP)';
   qty.step = code === 'unidad' ? '1' : '0.01';
   qty.min = code === 'unidad' ? '1' : '0.01';
   total.textContent = `Subtotal neto ${formatSubtotal(qty.value, price.value)}`;

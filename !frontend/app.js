@@ -46,7 +46,7 @@ async function api(path, payload) {
 $('back').onclick = goHome;
 $('home').onclick = event => { event.preventDefault(); if (user) goHome(); };
 
-const hiddenColumns = new Set(['password', 'solicitud_id', 'solicitud_salida', 'categoria_id']);
+const hiddenColumns = new Set(['password', 'solicitud_id', 'solicitud_salida', 'categoria_id', 'detalles_fifo', 'detalle_fifo_estado']);
 
 async function toggleActive(resource, item) {
   const nextState = !item.activo;

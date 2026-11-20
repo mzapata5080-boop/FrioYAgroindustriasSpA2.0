@@ -12,6 +12,8 @@ class Command(BaseCommand):
             'inventario_repuesto': {'id', 'codigo_parte', 'descripcion', 'ubicacion_bodega',
                 'unidad_medida', 'stock_actual', 'stock_minimo', 'categoria_id'},
             'inventario_movimientobodega': {'id', 'tipo', 'cantidad', 'fecha_registro', 'numero_ot', 'repuesto_id', 'costo_total_fifo', 'responsable_id', 'solicitud_salida'},
+            'inventario_detalleconsumofifo': {'id', 'salida_id', 'lote_id', 'orden', 'cantidad', 'precio_unitario', 'costo_asignado'},
+            'inventario_devolucionfifo': {'solicitud_id', 'consumo_id', 'movimiento_id', 'cantidad', 'costo_reintegrado'},
             'recepciones_ingreso': {'solicitud_id', 'factura_id', 'movimiento_id', 'responsable_id',
                 'unidad_medida', 'precio_unitario_neto', 'subtotal_neto', 'cantidad_disponible'},
         }
@@ -39,6 +41,17 @@ class Command(BaseCommand):
                     'responsable_id': ('usuarios_trabajador', 'id')}.items():
                     if targets.get((field,)) != target:
                         problems.append(f'Revisar relación de {field}')
+            if 'inventario_detalleconsumofifo' in tables:
+                detail_constraints = connection.introspection.get_constraints(cursor, 'inventario_detalleconsumofifo')
+                targets = {tuple(c['columns']): c.get('foreign_key') for c in detail_constraints.values() if c.get('foreign_key')}
+                for field, target in {'salida_id': ('inventario_movimientobodega', 'id'),
+                    'lote_id': ('recepciones_ingreso', 'solicitud_id')}.items():
+                    if targets.get((field,)) != target:
+                        problems.append(f'Revisar relación de detalle FIFO: {field}')
+                uniques = {tuple(c['columns']) for c in detail_constraints.values() if c.get('unique')}
+                for columns in [('salida_id', 'lote_id'), ('salida_id', 'orden')]:
+                    if columns not in uniques:
+                        problems.append(f'Falta unicidad en detalle FIFO: {columns}')
             if connection.vendor == 'postgresql':
                 cursor.execute("""SELECT table_name, column_name, data_type, numeric_precision, numeric_scale
                     FROM information_schema.columns WHERE table_schema = 'public'

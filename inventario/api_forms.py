@@ -80,7 +80,7 @@ class IngresoForm(forms.Form):
     factura = forms.ModelChoiceField(queryset=FacturaCompra.objects.all(), label='Factura')
     articulo = forms.ModelChoiceField(queryset=Repuesto.objects.filter(activo=True), label='Artículo')
     cantidad = forms.DecimalField(max_digits=15, decimal_places=2, min_value=Decimal('0.01'), label='Cantidad')
-    precio = forms.DecimalField(max_digits=12, decimal_places=2, min_value=0, label='Precio')
+    precio = forms.DecimalField(max_digits=12, decimal_places=2, min_value=0, label='Costo unitario neto de compra (CLP)')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)

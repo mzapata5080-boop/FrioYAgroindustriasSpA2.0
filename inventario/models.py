@@ -44,3 +44,39 @@ class RecepcionIngreso(models.Model):
         constraints = [
             models.CheckConstraint(condition=models.Q(cantidad_disponible__gte=0), name='fyag_lote_saldo_no_negativo'),
         ]
+
+
+class DetalleConsumoFIFO(models.Model):
+    """Trazabilidad permanente de los lotes consumidos por una salida."""
+    salida = models.ForeignKey(MovimientoBodega, on_delete=models.PROTECT, related_name='detalles_fifo')
+    lote = models.ForeignKey(RecepcionIngreso, on_delete=models.PROTECT, related_name='consumos_fifo')
+    orden = models.PositiveIntegerField()
+    cantidad = models.DecimalField(max_digits=15, decimal_places=2)
+    precio_unitario = models.DecimalField(max_digits=12, decimal_places=2)
+    costo_asignado = models.DecimalField(max_digits=25, decimal_places=2)
+
+    class Meta:
+        ordering = ['orden']
+        constraints = [
+            models.UniqueConstraint(fields=['salida', 'lote'], name='fyag_consumo_salida_lote_unico'),
+            models.UniqueConstraint(fields=['salida', 'orden'], name='fyag_consumo_salida_orden_unico'),
+            models.CheckConstraint(condition=models.Q(orden__gt=0), name='fyag_consumo_orden_positivo'),
+            models.CheckConstraint(condition=models.Q(cantidad__gt=0), name='fyag_consumo_cantidad_positiva'),
+            models.CheckConstraint(condition=models.Q(precio_unitario__gte=0), name='fyag_consumo_precio_no_negativo'),
+            models.CheckConstraint(condition=models.Q(costo_asignado__gte=0), name='fyag_consumo_costo_no_negativo'),
+        ]
+
+
+class DevolucionFIFO(models.Model):
+    """Crédito de cantidad y costo contra un consumo original, nunca un lote nuevo."""
+    solicitud_id = models.UUIDField(primary_key=True)
+    consumo = models.ForeignKey(DetalleConsumoFIFO, on_delete=models.PROTECT, related_name='devoluciones')
+    movimiento = models.OneToOneField(MovimientoBodega, on_delete=models.PROTECT, related_name='devolucion_fifo')
+    cantidad = models.DecimalField(max_digits=15, decimal_places=2)
+    costo_reintegrado = models.DecimalField(max_digits=25, decimal_places=2)
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=models.Q(cantidad__gt=0), name='fyag_devolucion_cantidad_positiva'),
+            models.CheckConstraint(condition=models.Q(costo_reintegrado__gte=0), name='fyag_devolucion_costo_no_negativo'),
+        ]
