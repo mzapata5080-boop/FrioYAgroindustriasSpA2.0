@@ -1,12 +1,22 @@
 """Consulta del historial y registro transaccional e idempotente de ingresos."""
+import uuid
 from decimal import Decimal, ROUND_HALF_UP
 from django.db import IntegrityError, transaction
+from django.db.models import DecimalField, Sum
+from django.db.models.functions import Coalesce
 from django.core.exceptions import ValidationError
 from django.http import JsonResponse
 from frio_agroindustria.api_common import allowed, error, data, schema, serialize as base_serialize
 from inventario.api_forms import IngresoForm, SalidaForm
 from inventario.fifo import registrar_salida_fifo, ConflictoSolicitudFIFO
 from inventario.models import MovimientoBodega, RecepcionIngreso, Repuesto
+from finanzas.forms import RecepcionDetalleForm
+from finanzas.models import (
+    FacturaCompra,
+    FacturaCompraDetalle,
+    RecepcionCompra,
+    RecepcionDetalle
+)
 
 
 def serialize(movement):
@@ -20,6 +30,14 @@ def serialize(movement):
             row.update({name: getattr(receipt, name) for name in (
                 'cantidad_disponible',)})
         except RecepcionIngreso.DoesNotExist:
+            pass
+        try:
+            detail = movement.detalle_recepcion_compra
+            row.update(
+                recepcion_id=str(detail.recepcion_id),
+                detalle_factura_id=detail.detalle_factura_id
+            )
+        except RecepcionDetalle.DoesNotExist:
             pass
     if movement.tipo == 'SALIDA':
         detalles = list(movement.detalles_fifo.all())
@@ -64,17 +82,40 @@ def movements(request, resource):
         return error('No tienes permisos.', 403)
     if request.method == 'GET':
         qs = MovimientoBodega.objects.select_related(
-            'repuesto', 'responsable', 'recepcioningreso__responsable', 'devolucion_fifo__consumo'
+            'repuesto',
+            'responsable',
+            'recepcioningreso__responsable',
+            'devolucion_fifo__consumo',
+            'detalle_recepcion_compra__recepcion'
         ).prefetch_related('detalles_fifo__lote').order_by('-fecha_registro', '-pk')
         if resource != 'kardex':
             qs = qs.filter(tipo='INGRESO' if resource == 'ingresos' else 'SALIDA')
+        fields = schema(IngresoForm() if resource == 'ingresos' else SalidaForm()) if resource != 'kardex' else []
         result = {
             'items': [serialize(x) for x in qs],
-            'fields': schema(IngresoForm() if resource == 'ingresos' else SalidaForm()) if resource != 'kardex' else [],
+            'fields': fields,
             'can_write': resource in ('ingresos', 'salidas'), 'can_delete': False,
         }
         if resource in ('ingresos', 'salidas'):
             result['articles'] = list(Repuesto.objects.filter(activo=True).values('id', 'codigo_parte', 'descripcion', 'unidad_medida', 'stock_actual'))
+        if resource == 'ingresos':
+            invoice_details = pending_invoice_details()
+            pending_invoice_ids = {
+                str(detail['factura_id']) for detail in invoice_details
+            }
+            for field in fields:
+                if field['name'] == 'factura':
+                    field['choices'] = [
+                        choice for choice in field['choices']
+                        if choice[0] == '' or choice[0] in pending_invoice_ids
+                    ]
+            fields.append({
+                'name': 'recepcion_detalles',
+                'label': 'Artículos recibidos',
+                'type': 'receipt_details',
+                'required': True
+            })
+            result['invoiceDetails'] = invoice_details
         return JsonResponse(result)
     if resource == 'salidas':
         return registrar_salida(request)
@@ -83,10 +124,17 @@ def movements(request, resource):
     payload = data(request)
     if any(name in payload for name in ('descuento_1', 'descuento_2', 'descuento_3', 'costo_unitario_final')):
         return error('Este ingreso no admite descuentos porcentuales. Recarga el formulario actualizado.')
+    raw_details = payload.pop('recepcion_detalles', None)
     form = IngresoForm(payload)
     if not form.is_valid():
         return JsonResponse({'errors': form.errors}, status=400)
     values = form.cleaned_data
+    quantities, detail_errors = validate_receipt_details(
+        raw_details,
+        values['factura'].pk
+    )
+    if detail_errors:
+        return JsonResponse({'errors': detail_errors}, status=400)
     try:
         with transaction.atomic():
             article = Repuesto.objects.select_for_update().get(pk=values['articulo'].pk)
@@ -114,6 +162,8 @@ def movements(request, resource):
             article.save(update_fields=['stock_actual'])
     except Repuesto.DoesNotExist:
         return error('El artículo ya no existe. Actualiza la lista.')
+    except FacturaCompra.DoesNotExist:
+        return error('La factura ya no existe. Actualiza la lista.')
     except IntegrityError:
 
         previous = RecepcionIngreso.objects.filter(solicitud_id=values['solicitud_id']).first()

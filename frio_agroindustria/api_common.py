@@ -73,6 +73,11 @@ def serialize(obj):
         d['proveedor_nombre'] = str(obj.proveedor)
         details = list(obj.detalles.all())
         d['detalle_count'] = len(details)
+        d['detalles_bloqueados'] = (
+            bool(obj.recepciones_compra.all())
+            or RecepcionIngreso.objects.filter(factura=obj).exists()
+            or any(detail.recepciones.all() for detail in details)
+        )
         d['detalles'] = [{
             'id': detail.pk,
             'articulo': detail.articulo_id,

@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django import forms
 from django.core.exceptions import ValidationError
 from django.forms.models import BaseInlineFormSet, inlineformset_factory
@@ -249,10 +250,47 @@ class FacturaCompraDetalleForm(forms.ModelForm):
             )
         return precio
 
+    def clean(self):
+        cleaned_data = super().clean()
+        if self.instance.pk and (
+            self.instance.recepciones.exists()
+            or self.instance.factura.recepciones_compra.exists()
+            or self._has_legacy_receptions()
+        ):
+            changed = any(
+                cleaned_data.get(field) != getattr(self.instance, field)
+                for field in ('articulo', 'cantidad', 'precio_unitario')
+                if field in cleaned_data
+            )
+            if changed or cleaned_data.get('DELETE', False):
+                raise ValidationError(
+                    "No se puede modificar un artículo que ya tiene recepciones."
+                )
+        return cleaned_data
+
+    def _has_legacy_receptions(self):
+        from inventario.models import RecepcionIngreso
+        return RecepcionIngreso.objects.filter(
+            factura_id=self.instance.factura_id
+        ).exists()
+
 
 class FacturaCompraDetalleInlineFormSet(BaseInlineFormSet):
     def clean(self):
         super().clean()
+        if self.instance.pk and (
+            self.instance.recepciones_compra.exists()
+            or self._has_legacy_receptions()
+        ):
+            if any(
+                not form.instance.pk
+                and form.cleaned_data
+                and not form.cleaned_data.get('DELETE', False)
+                for form in self.forms
+            ):
+                raise ValidationError(
+                    "No se pueden agregar artículos después de iniciar la recepción."
+                )
         if self.instance._state.adding and not any(
             form.cleaned_data and not form.cleaned_data.get('DELETE', False)
             for form in self.forms
@@ -260,6 +298,10 @@ class FacturaCompraDetalleInlineFormSet(BaseInlineFormSet):
             raise ValidationError(
                 "Agregue al menos un artículo a la factura."
             )
+
+    def _has_legacy_receptions(self):
+        from inventario.models import RecepcionIngreso
+        return RecepcionIngreso.objects.filter(factura=self.instance).exists()
 
 
 FacturaCompraDetalleFormSet = inlineformset_factory(
@@ -270,3 +312,32 @@ FacturaCompraDetalleFormSet = inlineformset_factory(
     extra=1,
     can_delete=True
 )
+
+
+class RecepcionDetalleForm(forms.Form):
+    detalle_factura = forms.ModelChoiceField(
+        queryset=FacturaCompraDetalle.objects.select_related('articulo'),
+        label='Artículo de la factura'
+    )
+    cantidad = forms.DecimalField(
+        max_digits=15,
+        decimal_places=2,
+        min_value=Decimal('0.01'),
+        label='Cantidad recibida'
+    )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        detalle = cleaned_data.get('detalle_factura')
+        cantidad = cleaned_data.get('cantidad')
+        if (
+            detalle
+            and cantidad
+            and detalle.articulo.unidad_medida == 'unidad'
+            and cantidad != cantidad.to_integral_value()
+        ):
+            self.add_error(
+                'cantidad',
+                "La cantidad debe ser entera para artículos por unidad."
+            )
+        return cleaned_data

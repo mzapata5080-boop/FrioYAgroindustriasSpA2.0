@@ -1,3 +1,5 @@
+import uuid
+from django.conf import settings
 from django.db import models
 from .validators import validar_rut_chileno
 
@@ -201,3 +203,79 @@ class FacturaCompraDetalle(models.Model):
 
     def __str__(self):
         return f"{self.articulo} x {self.cantidad}"
+
+
+class RecepcionCompra(models.Model):
+
+    solicitud_id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+
+    factura = models.ForeignKey(
+        FacturaCompra,
+        on_delete=models.PROTECT,
+        related_name="recepciones_compra"
+    )
+
+    responsable = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.PROTECT,
+        related_name="recepciones_compra"
+    )
+
+    recibida_el = models.DateTimeField(
+        auto_now_add=True
+    )
+
+    class Meta:
+        verbose_name = "Recepción de compra"
+        verbose_name_plural = "Recepciones de compra"
+        ordering = ["-recibida_el"]
+
+    def __str__(self):
+        return f"{self.factura} - {self.solicitud_id}"
+
+
+class RecepcionDetalle(models.Model):
+
+    recepcion = models.ForeignKey(
+        RecepcionCompra,
+        on_delete=models.CASCADE,
+        related_name="detalles"
+    )
+
+    detalle_factura = models.ForeignKey(
+        FacturaCompraDetalle,
+        on_delete=models.PROTECT,
+        related_name="recepciones"
+    )
+
+    cantidad = models.DecimalField(
+        max_digits=15,
+        decimal_places=2
+    )
+
+    movimiento = models.OneToOneField(
+        "inventario.MovimientoBodega",
+        on_delete=models.PROTECT,
+        related_name="detalle_recepcion_compra"
+    )
+
+    class Meta:
+        verbose_name = "Detalle de recepción"
+        verbose_name_plural = "Detalles de recepción"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["recepcion", "detalle_factura"],
+                name="fyag_recep_line_unica"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(cantidad__gt=0),
+                name="fyag_recep_cantidad_pos"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.detalle_factura.articulo} x {self.cantidad}"

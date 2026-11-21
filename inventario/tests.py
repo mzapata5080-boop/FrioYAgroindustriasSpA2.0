@@ -7,7 +7,14 @@ from django.contrib.auth.models import Group
 from django.db import IntegrityError
 from inventario.models import CategoriaRepuesto, Repuesto, MovimientoBodega, RecepcionIngreso
 from usuarios.models import Trabajador
-from finanzas.models import Proveedor, FacturaCompra
+from finanzas.models import (
+    Proveedor,
+    FacturaCompra,
+    FacturaCompraDetalle,
+    RecepcionCompra,
+    RecepcionDetalle
+)
+from finanzas.forms import FacturaCompraDetalleForm
 
 
 class InventoryApiTests(TestCase):
@@ -21,9 +28,17 @@ class InventoryApiTests(TestCase):
         cls.category = CategoriaRepuesto.objects.create(nombre='Materiales')
         cls.article = Repuesto.objects.create(codigo_parte='CL-01', descripcion='Clavos',
             ubicacion_bodega='A', unidad_medida='kg', categoria=cls.category)
+        cls.article_unit = Repuesto.objects.create(codigo_parte='TOR-01', descripcion='Tornillos',
+            ubicacion_bodega='B', unidad_medida='unidad', categoria=cls.category)
         cls.provider = Proveedor.objects.create(rut='11111111-1', razon_social='Proveedor')
         cls.invoice = FacturaCompra.objects.create(proveedor=cls.provider, fecha='2026-11-18',
             numero_documento='777', tipo_documento='Factura', monto='19900')
+        cls.invoice_line = FacturaCompraDetalle.objects.create(
+            factura=cls.invoice, articulo=cls.article, cantidad='5', precio_unitario='1990'
+        )
+        cls.invoice_line_unit = FacturaCompraDetalle.objects.create(
+            factura=cls.invoice, articulo=cls.article_unit, cantidad='3', precio_unitario='100'
+        )
 
     def setUp(self):
         self.client.force_login(self.warehouse)
@@ -43,6 +58,10 @@ class InventoryApiTests(TestCase):
         self.assertEqual(receipt.factura_id, self.invoice.pk)
         self.assertEqual(receipt.responsable_id, self.warehouse.pk)
         self.assertEqual(receipt.subtotal_neto, Decimal('2985.00'))
+        self.assertEqual(RecepcionCompra.objects.count(), 1)
+        detail = RecepcionDetalle.objects.get()
+        self.assertEqual(detail.detalle_factura_id, self.invoice_line.pk)
+        self.assertEqual(detail.movimiento_id, receipt.movimiento_id)
         self.assertEqual(self.client.get('/api/ingresos/').json()['items'][0]['id'], receipt.movimiento_id)
         self.client.force_login(self.manager)
         row = self.client.get('/api/kardex/').json()['items'][0]
@@ -55,13 +74,14 @@ class InventoryApiTests(TestCase):
         response = self.post()
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()['repeated'])
+        self.assertEqual(RecepcionCompra.objects.count(), 1)
         self.assertEqual(MovimientoBodega.objects.count(), 1)
         self.article.refresh_from_db()
         self.assertEqual(self.article.stock_actual, Decimal('1.50'))
 
     def test_uuid_cannot_be_reused_for_other_values(self):
         self.post()
-        self.payload['cantidad'] = '2.00'
+        self.payload['recepcion_detalles'][0]['cantidad'] = '2.00'
         self.assertEqual(self.post().status_code, 409)
         self.assertEqual(MovimientoBodega.objects.count(), 1)
 
@@ -71,22 +91,39 @@ class InventoryApiTests(TestCase):
         self.assertEqual(self.post().status_code, 409)
 
     def test_unknown_article_and_invoice_rejected(self):
-        for key in ('articulo', 'factura'):
-            payload = dict(self.payload, **{key: 999999})
+        for key in ('detalle_factura', 'factura'):
+            if key == 'detalle_factura':
+                payload = dict(self.payload, recepcion_detalles=[{
+                    'detalle_factura': 999999, 'cantidad': '1'
+                }])
+            else:
+                payload = dict(self.payload, factura=999999)
             self.assertEqual(self.post(payload=payload).status_code, 400)
         self.assertFalse(MovimientoBodega.objects.exists())
 
     def test_quantity_validation(self):
         for quantity in ('0', '-1', '1.001', 'NaN', 'Infinity'):
-            self.assertEqual(self.post(payload=dict(self.payload, cantidad=quantity)).status_code, 400)
+            self.assertEqual(self.post(payload=dict(
+                self.payload,
+                recepcion_detalles=[{
+                    'detalle_factura': self.invoice_line.pk,
+                    'cantidad': quantity
+                }]
+            )).status_code, 400)
 
     def test_fractional_units_rejected(self):
         self.article.unidad_medida = 'unidad'
         self.article.save()
         self.assertEqual(self.post().status_code, 400)
 
-    def test_negative_price_rejected(self):
-        self.assertEqual(self.post(payload=dict(self.payload, precio='-1')).status_code, 400)
+    def test_negative_invoice_line_price_rejected(self):
+        form = FacturaCompraDetalleForm(data={
+            'articulo': self.article.pk,
+            'cantidad': '1',
+            'precio_unitario': '-1'
+        })
+        self.assertFalse(form.is_valid())
+        self.assertIn('precio_unitario', form.errors)
 
     def test_overflow_rejected_without_movement(self):
         self.article.stock_actual = Decimal('9999999999999.99')
@@ -99,7 +136,111 @@ class InventoryApiTests(TestCase):
             self.assertEqual(self.post().status_code, 400)
         self.article.refresh_from_db()
         self.assertEqual(self.article.stock_actual, 0)
+        self.assertFalse(RecepcionCompra.objects.exists())
+        self.assertFalse(RecepcionDetalle.objects.exists())
         self.assertFalse(MovimientoBodega.objects.exists())
+
+    def test_partial_receipts_create_separate_headers_and_never_exceed_ordered_quantity(self):
+        self.assertEqual(self.post().status_code, 201)
+        second = dict(self.payload, solicitud_id=str(uuid.uuid4()), recepcion_detalles=[{
+            'detalle_factura': self.invoice_line.pk, 'cantidad': '2'
+        }])
+        self.assertEqual(self.post(payload=second).status_code, 201)
+        self.assertEqual(
+            RecepcionCompra.objects.filter(factura=self.invoice).count(),
+            2
+        )
+        third = dict(self.payload, solicitud_id=str(uuid.uuid4()), recepcion_detalles=[{
+            'detalle_factura': self.invoice_line.pk, 'cantidad': '2'
+        }])
+        self.assertEqual(self.post(payload=third).status_code, 400)
+        self.article.refresh_from_db()
+        self.assertEqual(self.article.stock_actual, Decimal('3.50'))
+
+    def test_one_receipt_can_receive_multiple_invoice_lines(self):
+        payload = dict(self.payload, recepcion_detalles=[
+            {'detalle_factura': self.invoice_line.pk, 'cantidad': '1.50'},
+            {'detalle_factura': self.invoice_line_unit.pk, 'cantidad': '2'}
+        ])
+        response = self.post(payload=payload)
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(RecepcionCompra.objects.count(), 1)
+        self.assertEqual(RecepcionDetalle.objects.count(), 2)
+        self.article.refresh_from_db()
+        self.article_unit.refresh_from_db()
+        self.assertEqual(self.article.stock_actual, Decimal('1.50'))
+        self.assertEqual(self.article_unit.stock_actual, Decimal('2'))
+
+    def test_legacy_invoice_receipts_reduce_the_pending_quantity(self):
+        legacy_request_id = uuid.UUID(self.payload['solicitud_id'])
+        movement = MovimientoBodega.objects.create(
+            tipo='INGRESO',
+            cantidad='2',
+            repuesto=self.article,
+            responsable=self.warehouse
+        )
+        RecepcionIngreso.objects.create(
+            solicitud_id=legacy_request_id,
+            factura=self.invoice,
+            movimiento=movement,
+            responsable=self.warehouse,
+            unidad_medida='kg',
+            precio_unitario_neto='1990',
+            subtotal_neto='3980',
+            cantidad_disponible='2'
+        )
+        self.article.stock_actual = Decimal('2')
+        self.article.save(update_fields=['stock_actual'])
+        metadata = self.client.get('/api/ingresos/').json()
+        line = next(item for item in metadata['invoiceDetails'] if item['id'] == self.invoice_line.pk)
+        self.assertEqual(line['pendiente'], '3.00')
+        stale_retry = dict(self.payload, recepcion_detalles=[{
+            'detalle_factura': self.invoice_line.pk, 'cantidad': '1'
+        }])
+        self.assertEqual(self.post(payload=stale_retry).status_code, 409)
+        overreceipt = dict(
+            self.payload,
+            solicitud_id=str(uuid.uuid4()),
+            recepcion_detalles=[{
+                'detalle_factura': self.invoice_line.pk, 'cantidad': '4'
+            }]
+        )
+        self.assertEqual(self.post(payload=overreceipt).status_code, 400)
+        self.article.refresh_from_db()
+        self.assertEqual(self.article.stock_actual, Decimal('2'))
+
+    def test_saving_invoice_and_lines_does_not_change_stock(self):
+        self.client.force_login(self.finance)
+        response = self.post('/api/facturas/', {
+            'proveedor': self.provider.pk,
+            'fecha': '2026-11-20',
+            'numero_documento': '778',
+            'tipo_documento': 'Factura',
+            'monto': '9950',
+            'observaciones': '',
+            'detalles': [{
+                'articulo': self.article.pk,
+                'cantidad': '5',
+                'precio_unitario': '1990'
+            }]
+        })
+        self.assertEqual(response.status_code, 201, response.content)
+        self.article.refresh_from_db()
+        self.assertEqual(self.article.stock_actual, 0)
+
+    def test_invoice_lines_cannot_change_after_a_reception(self):
+        self.assertEqual(self.post().status_code, 201)
+        self.client.force_login(self.finance)
+        response = self.post(f'/api/facturas/{self.invoice.pk}/', {
+            'detalles': [{
+                'articulo': self.article.pk,
+                'cantidad': '6',
+                'precio_unitario': '1990'
+            }]
+        })
+        self.assertEqual(response.status_code, 400)
+        self.invoice_line.refresh_from_db()
+        self.assertEqual(self.invoice_line.cantidad, Decimal('5'))
 
     def edit_unit(self, unit):
         return self.post(f'/api/articulos/{self.article.pk}/', {
@@ -139,8 +280,9 @@ class InventoryApiTests(TestCase):
         body = self.client.get('/api/ingresos/').json()
         self.assertEqual(body['articles'][0]['unidad_medida'], 'kg')
         fields = {field['name']: field for field in body['fields']}
-        self.assertEqual(fields['cantidad']['step'], '0.01')
         self.assertIn('777 — Proveedor', fields['factura']['choices'][1][1])
+        self.assertEqual(fields['recepcion_detalles']['type'], 'receipt_details')
+        self.assertEqual(body['invoiceDetails'][0]['unidad_medida'], 'kg')
 
     def test_old_movement_does_not_invent_responsible(self):
         MovimientoBodega.objects.create(tipo='INGRESO', cantidad=1, repuesto=self.article)

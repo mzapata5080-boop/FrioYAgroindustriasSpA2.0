@@ -69,6 +69,105 @@
 
             </p>
 
+            <p>
+
+                <strong>
+                    Observaciones:
+                </strong>
+
+                {{ factura.observaciones|default:"—" }}
+
+            </p>
+
+            <h4 class="mt-4">Artículos de la factura</h4>
+
+            <div class="table-responsive">
+
+                <table class="table table-bordered">
+
+                    <thead>
+
+                        <tr>
+                            <th>Artículo</th>
+                            <th>Cantidad facturada</th>
+                            <th>Precio unitario</th>
+                        </tr>
+
+                    </thead>
+
+                    <tbody>
+
+                        {% for detalle in factura.detalles.all %}
+
+                        <tr>
+                            <td>{{ detalle.articulo }}</td>
+                            <td>{{ detalle.cantidad }}</td>
+                            <td>${{ detalle.precio_unitario }}</td>
+                        </tr>
+
+                        {% empty %}
+
+                        <tr>
+                            <td colspan="3" class="text-muted">
+                                Esta factura no tiene artículos detallados.
+                            </td>
+                        </tr>
+
+                        {% endfor %}
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+            <h4 class="mt-4">Recepciones registradas</h4>
+
+            {% for recepcion in factura.recepciones_compra.all %}
+
+            <div class="border rounded p-3 mb-3">
+
+                <p class="mb-2">
+                    <strong>Fecha:</strong>
+                    {{ recepcion.recibida_el|date:"d/m/Y H:i" }}
+                    <span class="ms-3">
+                        <strong>Responsable:</strong>
+                        {{ recepcion.responsable }}
+                    </span>
+                </p>
+
+                <table class="table table-sm mb-0">
+
+                    <thead>
+                        <tr>
+                            <th>Artículo</th>
+                            <th>Cantidad recibida</th>
+                        </tr>
+                    </thead>
+
+                    <tbody>
+
+                        {% for linea in recepcion.detalles.all %}
+
+                        <tr>
+                            <td>{{ linea.detalle_factura.articulo }}</td>
+                            <td>{{ linea.cantidad }}</td>
+                        </tr>
+
+                        {% endfor %}
+
+                    </tbody>
+
+                </table>
+
+            </div>
+
+            {% empty %}
+
+            <p class="text-muted">Todavía no se han recibido artículos de esta factura.</p>
+
+            {% endfor %}
+
         </div>
 
     </div>

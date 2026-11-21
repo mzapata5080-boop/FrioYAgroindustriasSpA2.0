@@ -78,9 +78,6 @@ class ArticuloForm(forms.ModelForm):
 class IngresoForm(forms.Form):
     solicitud_id = forms.UUIDField(widget=forms.HiddenInput)
     factura = forms.ModelChoiceField(queryset=FacturaCompra.objects.all(), label='Factura')
-    articulo = forms.ModelChoiceField(queryset=Repuesto.objects.filter(activo=True), label='Artículo')
-    cantidad = forms.DecimalField(max_digits=15, decimal_places=2, min_value=Decimal('0.01'), label='Cantidad')
-    precio = forms.DecimalField(max_digits=12, decimal_places=2, min_value=0, label='Costo unitario neto de compra (CLP)')
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -88,14 +85,6 @@ class IngresoForm(forms.Form):
         self.fields['factura'].label_from_instance = lambda invoice: (
             f'{invoice.numero_documento} — {invoice.proveedor.razon_social} — {invoice.fecha:%d/%m/%Y}'
         )
-
-    def clean(self):
-        d = super().clean()
-        a = d.get('articulo')
-        n = d.get('cantidad')
-        if a and n and a.unidad_medida == 'unidad' and n != n.to_integral_value():
-            self.add_error('cantidad', 'Debe ser una cantidad entera para artículos por unidad.')
-        return d
 
 
 class SalidaForm(forms.Form):

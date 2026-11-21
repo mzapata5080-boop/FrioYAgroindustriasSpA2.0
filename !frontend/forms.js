@@ -52,28 +52,104 @@ function formatSubtotal(quantity, price) {
 }
 
 function attachReceiptDetails(form, context) {
- const articles = new Map((context.articles || []).map(a => [String(a.id), a.unidad_medida]));
- const units = { unidad: ['Unidades', 'unidad'], m: ['Metros', 'metro'], kg: ['Kilogramos', 'kilogramo'], l: ['Litros', 'litro'] };
- const article = form.elements.namedItem('articulo'), qty = form.elements.namedItem('cantidad'), price = form.elements.namedItem('precio');
- const box = node('div', undefined, 'mb-3');
- const unit = node('input'); unit.readOnly = true; unit.className = 'form-control'; unit.id = 'receipt-unit';
- const label = node('label', 'Unidad del artículo', 'form-label'); label.htmlFor = unit.id; box.append(label, unit);
- const total = node('p', 'Subtotal neto —', 'fw-semibold'); total.setAttribute('aria-live', 'polite');
- form.append(box, total);
- const priceLabel = form.querySelector('label[for="field-precio"]');
+ const invoice = form.elements.namedItem('factura');
+ const availableLines = context.invoiceDetails || [];
+ const section = node('section', undefined, 'mb-3');
+ const heading = node('h3', 'Artículos recibidos', 'h5');
+ const rowsContainer = node('div');
+ rowsContainer.id = 'receipt-details-list';
+ const rows = [];
+ const addButton = node('button', 'Agregar otro artículo', 'btn btn-outline-primary btn-sm mt-2');
+ addButton.type = 'button';
 
- function update() {
-  const code = articles.get(article.value), info = units[code];
-  unit.value = info ? info[0] : (code || 'Selecciona un artículo');
-  if (priceLabel) priceLabel.textContent = info ? `Costo neto de compra por ${info[1]} (CLP)` : 'Costo unitario neto de compra (CLP)';
-  qty.step = code === 'unidad' ? '1' : '0.01';
-  qty.min = code === 'unidad' ? '1' : '0.01';
-  total.textContent = `Subtotal neto ${formatSubtotal(qty.value, price.value)}`;
+ function addRow() {
+  const index = rows.length + 1;
+  const row = node('div', undefined, 'row g-2 align-items-end border rounded p-2 mb-2');
+  const lineWrap = node('div', undefined, 'col-md-8');
+  const lineLabel = node('label', 'Artículo pendiente', 'form-label');
+  const lineSelect = node('select');
+  lineSelect.className = 'form-select';
+  lineSelect.required = true;
+  lineLabel.htmlFor = `receipt-detail-line-${index}`;
+  lineSelect.id = lineLabel.htmlFor;
+  lineWrap.append(lineLabel, lineSelect);
+
+  const quantityWrap = node('div', undefined, 'col-md-2');
+  const quantityLabel = node('label', 'Cantidad recibida', 'form-label');
+  const quantity = node('input');
+  quantity.type = 'number';
+  quantity.className = 'form-control';
+  quantity.required = true;
+  quantityLabel.htmlFor = `receipt-detail-quantity-${index}`;
+  quantity.id = quantityLabel.htmlFor;
+  quantityWrap.append(quantityLabel, quantity);
+
+  const actionWrap = node('div', undefined, 'col-md-2');
+  const removeButton = node('button', 'Quitar', 'btn btn-outline-danger w-100');
+  removeButton.type = 'button';
+  removeButton.onclick = () => { row.hidden = true; };
+  actionWrap.append(removeButton);
+
+  function updateLineOptions() {
+   const selected = lineSelect.value;
+   lineSelect.replaceChildren();
+   const placeholder = node('option', 'Selecciona un artículo');
+   placeholder.value = '';
+   lineSelect.append(placeholder);
+   availableLines
+    .filter(line => String(line.factura_id) === invoice.value)
+    .forEach(line => {
+     const option = node(
+      'option',
+      `${line.codigo_parte} — ${line.articulo_nombre} (pendiente: ${line.pendiente})`
+     );
+     option.value = String(line.id);
+     lineSelect.append(option);
+    });
+   lineSelect.value = [...lineSelect.options].some(option => option.value === selected)
+    ? selected
+    : '';
+   updateQuantityLimit();
+  }
+
+  function updateQuantityLimit() {
+   const line = availableLines.find(item => String(item.id) === lineSelect.value);
+   if (!line) {
+    quantity.value = '';
+    quantity.max = '';
+    quantity.min = '0.01';
+    quantity.step = '0.01';
+    quantityLabel.textContent = 'Cantidad recibida';
+    return;
+   }
+   quantity.max = line.pendiente;
+   quantity.min = line.unidad_medida === 'unidad' ? '1' : '0.01';
+   quantity.step = line.unidad_medida === 'unidad' ? '1' : '0.01';
+   quantityLabel.textContent = `Cantidad recibida (${line.unidad_medida})`;
+  }
+
+  lineSelect.addEventListener('change', updateQuantityLimit);
+  row.append(lineWrap, quantityWrap, actionWrap);
+  rowsContainer.append(row);
+  rows.push({ row, lineSelect, quantity, updateLineOptions });
+  updateLineOptions();
  }
- article.addEventListener('change', update); qty.addEventListener('input', update); price.addEventListener('input', update); update();
+
+ invoice.addEventListener('change', () => rows.forEach(row => row.updateLineOptions()));
+ addRow();
+ addButton.onclick = addRow;
+ section.append(heading, rowsContainer, addButton);
+ form.append(section);
+
+ return () => rows
+  .filter(entry => !entry.row.hidden)
+  .map(entry => ({
+   detalle_factura: entry.lineSelect.value,
+   cantidad: entry.quantity.value
+  }));
 }
 
-function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false) {
+function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false, locked = false) {
  const articles = context.articles || [];
  const articleById = new Map(articles.map(article => [String(article.id), article]));
  const units = { unidad: 'Unidades', m: 'Metros', kg: 'Kilogramos', l: 'Litros' };
@@ -84,6 +160,24 @@ function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false)
  const rows = [];
  const addButton = node('button', 'Agregar artículo', 'btn btn-outline-primary btn-sm mt-2');
  addButton.type = 'button';
+
+ if (locked) {
+  const notice = node(
+   'p',
+   'Los artículos de esta factura están bloqueados porque ya hay cantidades recibidas.',
+   'text-muted'
+  );
+  (initialDetails || []).forEach(detail => {
+   rowsContainer.append(node(
+    'p',
+    `${detail.articulo_nombre}: ${detail.cantidad} × ${detail.precio_unitario}`,
+    'mb-1'
+   ));
+  });
+  section.append(heading, notice, rowsContainer);
+  form.append(section);
+  return null;
+ }
 
  function addRow(detail = {}) {
   const index = rows.length + 1;
@@ -286,7 +380,7 @@ function showForm(fields, item = {}) {
    });
   } else if (field.type === 'textarea') {
    input = node('textarea');
-  } else if (field.type === 'details') {
+  } else if (field.type === 'details' || field.type === 'receipt_details') {
    continue;
   } else {
    input = node('input');
@@ -327,10 +421,18 @@ function showForm(fields, item = {}) {
  }
 
  const invoiceDetails = resource === 'facturas'
-  ? attachInvoiceDetails(form, context, item.detalles, Boolean(editId && !item.detalles.length))
+  ? attachInvoiceDetails(
+   form,
+   context,
+   item.detalles,
+   Boolean(editId && !item.detalles.length),
+   Boolean(item.detalles_bloqueados)
+  )
+  : null;
+ const receiptDetails = resource === 'ingresos'
+  ? attachReceiptDetails(form, context)
   : null;
 
- if (resource === 'ingresos') attachReceiptDetails(form, context);
  if (resource === 'salidas') attachOutputDetails(form, context);
  if (resource === 'solicitudes') attachSolicitudDetails(form, context);
 
@@ -357,11 +459,12 @@ function showForm(fields, item = {}) {
 
   const payload = {};
   fields.forEach(f => {
-   if (f.type === 'details') return;
+   if (f.type === 'details' || f.type === 'receipt_details') return;
    const input = form.elements.namedItem(f.name);
    payload[f.name] = f.type === 'checkbox' ? input.checked : input.value;
   });
   if (invoiceDetails) payload.detalles = invoiceDetails();
+  if (receiptDetails) payload.recepcion_detalles = receiptDetails();
 
   try {
    await api(`${resource}/${editId ? editId + '/' : ''}`, payload);

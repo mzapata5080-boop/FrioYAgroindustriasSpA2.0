@@ -22,7 +22,13 @@ class Element {
 function context(){
  const nodes={editor:new Element('section'),'editor-title':new Element('h2'),'edit-form':new Element('form')};
  const ctx={window:{crypto:webcrypto},Event:class {constructor(type){this.type=type;}},current:'ingresos',
-  metadata:{articles:[{id:1,unidad_medida:'kg'},{id:2,unidad_medida:'unidad'}]},
+  metadata:{
+   invoiceDetails:[
+    {id:101,factura_id:7,codigo_parte:'CL-01',articulo_nombre:'Clavos',unidad_medida:'kg',pendiente:'3.50'},
+    {id:103,factura_id:7,codigo_parte:'TOR-01',articulo_nombre:'Tornillos',unidad_medida:'unidad',pendiente:'2'},
+    {id:102,factura_id:8,codigo_parte:'TOR-01',articulo_nombre:'Tornillos',unidad_medida:'unidad',pendiente:'4'}
+   ]
+  },
   $:id=>nodes[id],node:(tag,text,cls)=>{const n=new Element(tag);if(text!==undefined)n.textContent=text;n.className=cls;return n;},
   notice:()=>{},api:async()=>({}),load:async()=>{}};
  vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../!frontend/forms.js'),'utf8'),ctx);
@@ -44,27 +50,52 @@ test('subtotales exactos y redondeo equivalentes al backend',()=>{
  assert.equal(ctx.formatSubtotal('','20'),'—');
  assert.equal(ctx.formatSubtotal('1,50','1990'),'$2.985,00 CLP');
 });
-test('facturas y artículos se filtran por texto sin distinguir acentos',()=>{
+test('facturas filtran sus artículos pendientes',()=>{
  const {ctx,nodes}=context();ctx.showForm(fields);const form=nodes['edit-form'];
  const invoiceWrap=form.children.find(n=>n.find(x=>x.name==='factura'));
  const search=invoiceWrap.children.find(n=>n.type==='search');
  search.value='777';search.oninput();
  assert.equal(form.elements.namedItem('factura').options.length,2);
  assert.equal(form.elements.namedItem('factura').options[1].value,'7');
- search.value='perez';search.oninput();
- assert.equal(form.elements.namedItem('factura').options[1].value,'7');
- const articleWrap=form.children.find(n=>n.find(x=>x.name==='articulo'));
- const articleSearch=articleWrap.children.find(n=>n.type==='search');articleSearch.value='clavos';articleSearch.oninput();
- assert.equal(form.elements.namedItem('articulo').options[1].value,'1');
+ const invoice=form.elements.namedItem('factura');
+ invoice.value='7';invoice.dispatchEvent(new ctx.Event('change'));
+ const line=form.find(n=>n.id==='receipt-detail-line-1');
+ assert.equal(line.options.length,2);
+ assert.equal(line.options[1].value,'101');
 });
 test('unidad, precio por kilogramo y subtotal se actualizan al seleccionar',()=>{
  const {ctx,nodes}=context();ctx.showForm(fields);const form=nodes['edit-form'];
- const article=form.elements.namedItem('articulo'), qty=form.elements.namedItem('cantidad'), price=form.elements.namedItem('precio');
- article.value='1';qty.value='1.50';price.value='1990';article.dispatchEvent(new ctx.Event('change'));
- assert.equal(form.find(n=>n.id==='receipt-unit').value,'Kilogramos');
- assert.equal(form.querySelector('label[for="field-precio"]').textContent,'Precio neto por kilogramo (CLP)');
- assert.ok(form.children.some(n=>n.textContent==='Subtotal neto $2.985,00 CLP'));
- article.value='2';article.dispatchEvent(new ctx.Event('change'));assert.equal(qty.step,'1');
+ const invoice=form.elements.namedItem('factura');
+ const line=form.find(n=>n.id==='receipt-detail-line-1');
+ const qty=form.find(n=>n.id==='receipt-detail-quantity-1');
+ invoice.value='7';invoice.dispatchEvent(new ctx.Event('change'));
+ line.value='101';line.dispatchEvent(new ctx.Event('change'));
+ assert.equal(qty.step,'0.01');
+ assert.equal(qty.max,'3.50');
+ invoice.value='8';invoice.dispatchEvent(new ctx.Event('change'));
+ line.value='102';line.dispatchEvent(new ctx.Event('change'));
+ assert.equal(qty.step,'1');
+ assert.equal(qty.min,'1');
+ assert.equal(qty.max,'4');
+});
+test('una recepción envía varias líneas de la factura seleccionada',async()=>{
+ const {ctx,nodes}=context();const payloads=[];
+ ctx.api=async(path,payload)=>{payloads.push(payload);return {};};
+ ctx.showForm(fields);const form=nodes['edit-form'];
+ const invoice=form.elements.namedItem('factura');
+ invoice.value='7';invoice.dispatchEvent(new ctx.Event('change'));
+ const first=form.find(n=>n.id==='receipt-detail-line-1');
+ first.value='101';first.dispatchEvent(new ctx.Event('change'));
+ form.find(n=>n.id==='receipt-detail-quantity-1').value='1.50';
+ form.find(n=>n.textContent==='Agregar otro artículo').onclick();
+ const second=form.find(n=>n.id==='receipt-detail-line-2');
+ second.value='103';second.dispatchEvent(new ctx.Event('change'));
+ form.find(n=>n.id==='receipt-detail-quantity-2').value='1';
+ await form.onsubmit({preventDefault(){}});
+ assert.deepEqual(JSON.parse(JSON.stringify(payloads[0].recepcion_detalles)),[
+  {detalle_factura:'101',cantidad:'1.50'},
+  {detalle_factura:'103',cantidad:'1'}
+ ]);
 });
 test('reintentar después de un error conserva el UUID de la solicitud',async()=>{
  const {ctx,nodes}=context();const payloads=[];

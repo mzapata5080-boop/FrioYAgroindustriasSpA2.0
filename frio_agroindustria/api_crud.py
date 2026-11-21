@@ -9,7 +9,7 @@ from frio_agroindustria.api_common import error, data, allowed, schema, serializ
 from frio_agroindustria.common import registrar_cambio, snapshot_instance
 from frio_agroindustria.api_resources import RESOURCES
 from inventario.api import movements
-from inventario.models import Repuesto
+from inventario.models import Repuesto, RecepcionIngreso
 from finanzas.forms import FacturaCompraDetalleForm
 
 
@@ -113,7 +113,11 @@ def collection(request,resource):
         if resource == 'articulos':
             qs = qs.select_related('categoria')
         if resource == 'facturas':
-            qs = qs.prefetch_related('detalles__articulo')
+            qs = qs.prefetch_related(
+                'detalles__articulo',
+                'detalles__recepciones',
+                'recepciones_compra'
+            )
         return JsonResponse({
             'items': [serialize(x) for x in qs],
             'fields': _resource_fields(resource, formclass),
@@ -174,6 +178,21 @@ def detail(request,resource,pk):
         with transaction.atomic():
             obj = model.objects.select_for_update().get(pk=pk)
             antes = snapshot_instance(obj)
+            if (
+                resource == 'facturas'
+                and raw_details is not None
+                and (
+                    obj.recepciones_compra.exists()
+                    or RecepcionIngreso.objects.filter(factura=obj).exists()
+                )
+            ):
+                return JsonResponse({
+                    'errors': {
+                        'detalles': [
+                            'No se pueden cambiar los artículos de una factura que ya tiene recepciones.'
+                        ]
+                    }
+                }, status=400)
             merged = model_to_dict(obj)
             merged.update(d)
             form = formclass(merged, instance=obj)

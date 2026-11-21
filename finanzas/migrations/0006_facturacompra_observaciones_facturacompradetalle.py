@@ -2,6 +2,7 @@
 
 import django.db.models.deletion
 from django.db import migrations, models
+from django.conf import settings
 
 
 class Migration(migrations.Migration):
@@ -9,6 +10,8 @@ class Migration(migrations.Migration):
     dependencies = [
         ('finanzas', '0005_cliente_cargo_contacto_cliente_representante_and_more'),
     ]
+    if settings.MIGRATION_MODULES.get('inventario', 'inventario.migrations') is not None:
+        dependencies.append(('inventario', '0001_initial'))
 
     operations = [
         migrations.AddField(
