@@ -1,6 +1,12 @@
 from django import forms
-from .models import Cliente, Proveedor
-from .models import (Cliente,Proveedor,FacturaCompra)
+from django.core.exceptions import ValidationError
+from django.forms.models import BaseInlineFormSet, inlineformset_factory
+from .models import (
+    Cliente,
+    Proveedor,
+    FacturaCompra,
+    FacturaCompraDetalle
+)
 
 class ClienteForm(forms.ModelForm):
 
@@ -40,43 +46,6 @@ class ClienteForm(forms.ModelForm):
 
         return rut
 
-
-class Meta:
-        model = Cliente
-        fields = [
-            'rut',
-            'razon_social',
-            'telefono',
-            'correo',
-            'direccion'
-        ]
-
-        widgets = {
-            'rut': forms.TextInput(attrs={
-                'class': 'form-control',
-                'placeholder': '12345678-9'
-            }),
-
-            'razon_social': forms.TextInput(attrs={
-                'class': 'form-control',
-                'placeholder': 'Razón Social'
-            }),
-
-            'telefono': forms.TextInput(attrs={
-                'class': 'form-control',
-                'placeholder': '+56 9 1234 5678'
-            }),
-
-            'correo': forms.EmailInput(attrs={
-                'class': 'form-control',
-                'placeholder': 'correo@empresa.cl'
-            }),
-
-            'direccion': forms.TextInput(attrs={
-                'class': 'form-control',
-                'placeholder': 'Dirección'
-            }),
-        }
 
 class ProveedorForm(forms.ModelForm):
 
@@ -186,7 +155,8 @@ class FacturaCompraForm(forms.ModelForm):
             'fecha',
             'numero_documento',
             'tipo_documento',
-            'monto'
+            'monto',
+            'observaciones'
         ]
 
         widgets = {
@@ -220,4 +190,83 @@ class FacturaCompraForm(forms.ModelForm):
                     'class': 'form-control'
                 }
             ),
+
+            'observaciones': forms.Textarea(
+                attrs={
+                    'class': 'form-control',
+                    'rows': 3
+                }
+            ),
         }
+
+    def clean_monto(self):
+        monto = self.cleaned_data['monto']
+        if monto <= 0:
+            raise forms.ValidationError(
+                "El monto de la factura debe ser mayor que cero."
+            )
+        return monto
+
+
+class FacturaCompraDetalleForm(forms.ModelForm):
+    class Meta:
+        model = FacturaCompraDetalle
+        fields = ['articulo', 'cantidad', 'precio_unitario']
+
+        widgets = {
+            'articulo': forms.Select(attrs={'class': 'form-control'}),
+            'cantidad': forms.NumberInput(
+                attrs={'class': 'form-control', 'min': '0.01', 'step': '0.01'}
+            ),
+            'precio_unitario': forms.NumberInput(
+                attrs={'class': 'form-control', 'min': '0', 'step': '0.01'}
+            ),
+        }
+
+    def clean_cantidad(self):
+        cantidad = self.cleaned_data['cantidad']
+        if cantidad <= 0:
+            raise forms.ValidationError(
+                "La cantidad debe ser mayor que cero."
+            )
+
+        articulo = self.cleaned_data.get('articulo')
+        if (
+            articulo
+            and articulo.unidad_medida == 'unidad'
+            and cantidad != cantidad.to_integral_value()
+        ):
+            raise forms.ValidationError(
+                "La cantidad debe ser entera para artículos por unidad."
+            )
+        return cantidad
+
+    def clean_precio_unitario(self):
+        precio = self.cleaned_data['precio_unitario']
+        if precio < 0:
+            raise forms.ValidationError(
+                "El precio unitario no puede ser negativo."
+            )
+        return precio
+
+
+class FacturaCompraDetalleInlineFormSet(BaseInlineFormSet):
+    def clean(self):
+        super().clean()
+        if self.instance._state.adding and not any(
+            form.cleaned_data and not form.cleaned_data.get('DELETE', False)
+            for form in self.forms
+        ):
+            raise ValidationError(
+                "Agregue al menos un artículo a la factura."
+            )
+
+
+FacturaCompraDetalleFormSet = inlineformset_factory(
+    FacturaCompra,
+    FacturaCompraDetalle,
+    form=FacturaCompraDetalleForm,
+    formset=FacturaCompraDetalleInlineFormSet,
+    extra=1,
+    can_delete=True
+)

@@ -73,6 +73,101 @@ function attachReceiptDetails(form, context) {
  article.addEventListener('change', update); qty.addEventListener('input', update); price.addEventListener('input', update); update();
 }
 
+function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false) {
+ const articles = context.articles || [];
+ const articleById = new Map(articles.map(article => [String(article.id), article]));
+ const units = { unidad: 'Unidades', m: 'Metros', kg: 'Kilogramos', l: 'Litros' };
+ const section = node('section', undefined, 'mb-3');
+ const heading = node('h3', 'Artículos de la factura', 'h5');
+ const rowsContainer = node('div');
+ rowsContainer.id = 'invoice-details-list';
+ const rows = [];
+ const addButton = node('button', 'Agregar artículo', 'btn btn-outline-primary btn-sm mt-2');
+ addButton.type = 'button';
+
+ function addRow(detail = {}) {
+  const index = rows.length + 1;
+  const row = node('div', undefined, 'row g-2 align-items-end border rounded p-2 mb-2');
+  const articleWrap = node('div', undefined, 'col-md-5');
+  const articleLabel = node('label', 'Artículo', 'form-label');
+  const articleSelect = node('select');
+  articleSelect.className = 'form-select';
+  articleSelect.required = true;
+  const placeholder = node('option', 'Selecciona un artículo');
+  placeholder.value = '';
+  articleSelect.append(placeholder);
+  articles.forEach(article => {
+   const option = node('option', `${article.codigo_parte} — ${article.descripcion}`);
+   option.value = String(article.id);
+   articleSelect.append(option);
+  });
+  articleSelect.value = String(detail.articulo ?? detail.articulo_id ?? '');
+  articleLabel.htmlFor = `invoice-detail-article-${index}`;
+  articleSelect.id = articleLabel.htmlFor;
+  articleWrap.append(articleLabel, articleSelect);
+
+  const quantityWrap = node('div', undefined, 'col-md-2');
+  const quantityLabel = node('label', 'Cantidad', 'form-label');
+  const quantity = node('input');
+  quantity.type = 'number';
+  quantity.className = 'form-control';
+  quantity.min = '0.01';
+  quantity.step = '0.01';
+  quantity.required = true;
+  quantity.value = detail.cantidad ?? '';
+  quantityLabel.htmlFor = `invoice-detail-quantity-${index}`;
+  quantity.id = quantityLabel.htmlFor;
+  quantityWrap.append(quantityLabel, quantity);
+
+  const priceWrap = node('div', undefined, 'col-md-3');
+  const priceLabel = node('label', 'Precio unitario', 'form-label');
+  const price = node('input');
+  price.type = 'number';
+  price.className = 'form-control';
+  price.min = '0';
+  price.step = '0.01';
+  price.required = true;
+  price.value = detail.precio_unitario ?? '';
+  priceLabel.htmlFor = `invoice-detail-price-${index}`;
+  price.id = priceLabel.htmlFor;
+  priceWrap.append(priceLabel, price);
+
+  const actionWrap = node('div', undefined, 'col-md-2');
+  const removeButton = node('button', 'Quitar', 'btn btn-outline-danger w-100');
+  removeButton.type = 'button';
+  removeButton.onclick = () => { row.hidden = true; };
+  actionWrap.append(removeButton);
+
+  function updateQuantityStep() {
+   const article = articleById.get(articleSelect.value);
+   quantity.step = article && article.unidad_medida === 'unidad' ? '1' : '0.01';
+   quantity.min = article && article.unidad_medida === 'unidad' ? '1' : '0.01';
+   const unit = article ? (units[article.unidad_medida] || article.unidad_medida) : '';
+   quantityLabel.textContent = unit ? `Cantidad (${unit})` : 'Cantidad';
+  }
+  articleSelect.addEventListener('change', updateQuantityStep);
+  updateQuantityStep();
+
+  row.append(articleWrap, quantityWrap, priceWrap, actionWrap);
+  rowsContainer.append(row);
+  rows.push({ row, articleSelect, quantity, price });
+ }
+
+ if (initialDetails && initialDetails.length) initialDetails.forEach(addRow);
+ else if (!allowEmpty) addRow();
+ addButton.onclick = () => addRow();
+ section.append(heading, rowsContainer, addButton);
+ form.append(section);
+
+ return () => rows
+  .filter(entry => !entry.row.hidden)
+  .map(entry => ({
+   articulo: entry.articleSelect.value,
+   cantidad: entry.quantity.value,
+   precio_unitario: entry.price.value
+  }));
+}
+
 function attachOutputDetails(form, context) {
  const articles = new Map((context.articles || []).map(a => [String(a.id), a]));
  const units = { unidad: 'Unidades', m: 'Metros', kg: 'Kilogramos', l: 'Litros' };
@@ -189,6 +284,10 @@ function showForm(fields, item = {}) {
     option.value = value;
     input.append(option);
    });
+  } else if (field.type === 'textarea') {
+   input = node('textarea');
+  } else if (field.type === 'details') {
+   continue;
   } else {
    input = node('input');
    input.type = field.type;
@@ -227,6 +326,10 @@ function showForm(fields, item = {}) {
   form.append(wrap);
  }
 
+ const invoiceDetails = resource === 'facturas'
+  ? attachInvoiceDetails(form, context, item.detalles, Boolean(editId && !item.detalles.length))
+  : null;
+
  if (resource === 'ingresos') attachReceiptDetails(form, context);
  if (resource === 'salidas') attachOutputDetails(form, context);
  if (resource === 'solicitudes') attachSolicitudDetails(form, context);
@@ -254,9 +357,11 @@ function showForm(fields, item = {}) {
 
   const payload = {};
   fields.forEach(f => {
+   if (f.type === 'details') return;
    const input = form.elements.namedItem(f.name);
    payload[f.name] = f.type === 'checkbox' ? input.checked : input.value;
   });
+  if (invoiceDetails) payload.detalles = invoiceDetails();
 
   try {
    await api(`${resource}/${editId ? editId + '/' : ''}`, payload);

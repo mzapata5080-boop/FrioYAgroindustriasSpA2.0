@@ -9,6 +9,76 @@ from frio_agroindustria.api_common import error, data, allowed, schema, serializ
 from frio_agroindustria.common import registrar_cambio, snapshot_instance
 from frio_agroindustria.api_resources import RESOURCES
 from inventario.api import movements
+from inventario.models import Repuesto
+from finanzas.forms import FacturaCompraDetalleForm
+
+
+def _resource_fields(resource, formclass, instance=None):
+    form = formclass(instance=instance) if instance else formclass()
+    fields = schema(form)
+    if resource == 'facturas':
+        fields.append({
+            'name': 'detalles',
+            'label': 'Artículos de la factura',
+            'type': 'details',
+            'required': True
+        })
+    return fields
+
+
+def _resource_options(resource):
+    if resource != 'facturas':
+        return {}
+    return {
+        'articles': list(
+            Repuesto.objects.order_by('pk').values(
+                'id', 'codigo_parte', 'descripcion', 'unidad_medida'
+            )
+        )
+    }
+
+
+def _validate_invoice_details(raw_details, required=True):
+    if not isinstance(raw_details, list):
+        return None, {
+            'detalles': ['Los detalles deben enviarse como una lista de artículos.']
+        }
+    if required and not raw_details:
+        return None, {
+            'detalles': ['Agregue al menos un artículo a la factura.']
+        }
+    if not raw_details:
+        return [], {}
+
+    details = []
+    errors = {}
+    for index, values in enumerate(raw_details):
+        if not isinstance(values, dict):
+            errors[f'detalles.{index}'] = [
+                'Cada detalle debe incluir artículo, cantidad y precio unitario.'
+            ]
+            continue
+
+        form = FacturaCompraDetalleForm(data=values)
+        if not form.is_valid():
+            for field, messages in form.errors.items():
+                errors[f'detalles.{index}.{field}'] = [
+                    str(message) for message in messages
+                ]
+            continue
+        details.append(form.save(commit=False))
+
+    if errors:
+        return None, errors
+    return details, {}
+
+
+def _save_invoice_details(invoice, details, replace=False):
+    if replace:
+        invoice.detalles.all().delete()
+    for detail in details:
+        detail.factura = invoice
+        detail.save()
 
 @require_http_methods(['GET','POST'])
 def collection(request,resource):
@@ -42,14 +112,33 @@ def collection(request,resource):
         qs = model.objects.order_by('pk')
         if resource == 'articulos':
             qs = qs.select_related('categoria')
-        return JsonResponse({'items':[serialize(x) for x in qs], 'fields':schema(formclass()),'can_write':allowed(request.user,roles),'can_delete':resource in ('clientes','trabajadores')})
-    form=formclass(data(request))
-    if resource=='facturas' and form.is_valid() and form.cleaned_data['monto']<=0:
-        form.add_error('monto','El monto debe ser mayor que cero.')
-    if not form.is_valid(): return JsonResponse({'errors':form.errors},status=400)
+        if resource == 'facturas':
+            qs = qs.prefetch_related('detalles__articulo')
+        return JsonResponse({
+            'items': [serialize(x) for x in qs],
+            'fields': _resource_fields(resource, formclass),
+            'can_write': allowed(request.user, roles),
+            'can_delete': resource in ('clientes', 'trabajadores'),
+            **_resource_options(resource)
+        })
+
+    payload = data(request)
+    raw_details = payload.pop('detalles', None) if resource == 'facturas' else None
+    form = formclass(payload)
+    if not form.is_valid():
+        return JsonResponse({'errors': form.errors}, status=400)
+
+    invoice_details = None
+    if resource == 'facturas':
+        invoice_details, detail_errors = _validate_invoice_details(raw_details)
+        if detail_errors:
+            return JsonResponse({'errors': detail_errors}, status=400)
+
     try:
         with transaction.atomic():
             obj=form.save()
+            if resource == 'facturas':
+                _save_invoice_details(obj, invoice_details)
             registrar_cambio(request.user, 'CREAR', obj)
     except IntegrityError: return error('El registro ya existe o tiene referencias inválidas.')
     return JsonResponse({'item':serialize(obj)},status=201)
@@ -63,8 +152,14 @@ def detail(request,resource,pk):
     obj=model.objects.filter(pk=pk).first()
     if obj is None: return error('Registro no encontrado.',404)
     if resource=='trabajadores': formclass=TrabajadorEditarForm
-    if request.method=='GET': return JsonResponse({'item':serialize(obj),'fields':schema(formclass(instance=obj))})
+    if request.method=='GET':
+        return JsonResponse({
+            'item': serialize(obj),
+            'fields': _resource_fields(resource, formclass, obj),
+            **_resource_options(resource)
+        })
     d=data(request)
+    raw_details = d.pop('detalles', None) if resource == 'facturas' else None
     if d.pop('_delete',False):
         if resource not in ('clientes','trabajadores'): return error('No se permite eliminar este tipo de registro.',403)
         if resource=='trabajadores' and obj.pk==request.user.pk: return error('No puedes eliminar tu propia cuenta.')
@@ -82,11 +177,21 @@ def detail(request,resource,pk):
             merged = model_to_dict(obj)
             merged.update(d)
             form = formclass(merged, instance=obj)
-            if resource == 'facturas' and form.is_valid() and form.cleaned_data['monto'] <= 0:
-                form.add_error('monto', 'El monto debe ser mayor que cero.')
             if not form.is_valid():
                 return JsonResponse({'errors': form.errors}, status=400)
+
+            invoice_details = None
+            if resource == 'facturas' and raw_details is not None:
+                invoice_details, detail_errors = _validate_invoice_details(
+                    raw_details,
+                    required=obj.detalles.exists()
+                )
+                if detail_errors:
+                    return JsonResponse({'errors': detail_errors}, status=400)
+
             obj = form.save()
+            if resource == 'facturas' and invoice_details is not None:
+                _save_invoice_details(obj, invoice_details, replace=True)
             registrar_cambio(request.user, 'EDITAR', obj, antes=antes)
     except model.DoesNotExist:
         return error('Registro no encontrado.', 404)

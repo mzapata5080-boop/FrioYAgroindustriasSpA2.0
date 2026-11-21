@@ -46,7 +46,7 @@ async function api(path, payload) {
 $('back').onclick = goHome;
 $('home').onclick = event => { event.preventDefault(); if (user) goHome(); };
 
-const hiddenColumns = new Set(['password', 'solicitud_id', 'solicitud_salida', 'categoria_id', 'detalles_fifo', 'detalle_fifo_estado']);
+const hiddenColumns = new Set(['password', 'solicitud_id', 'solicitud_salida', 'categoria_id', 'detalles', 'detalles_fifo', 'detalle_fifo_estado']);
 
 async function toggleActive(resource, item) {
   const nextState = !item.activo;
@@ -133,6 +133,15 @@ async function load(resource) {
       solicitante: 'Solicitante',
       observaciones: 'Observaciones',
       estado: 'Estado'
+    };
+  } else if (resource === 'facturas') {
+    keys = ['numero_documento', 'proveedor_nombre', 'fecha', 'monto', 'detalle_count'];
+    labels = {
+      numero_documento: 'N° documento',
+      proveedor_nombre: 'Proveedor',
+      fecha: 'Fecha',
+      monto: 'Monto',
+      detalle_count: 'Artículos'
     };
   } else if (items.length) {
     keys = Object.keys(items[0]).filter(k => !hiddenColumns.has(k));

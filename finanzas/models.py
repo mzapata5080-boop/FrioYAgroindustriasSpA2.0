@@ -145,9 +145,59 @@ class FacturaCompra(models.Model):
         decimal_places=2
     )
 
+    observaciones = models.TextField(
+        max_length=1000,
+        default="",
+        blank=True,
+        verbose_name="Observaciones"
+    )
+
     creado_el = models.DateTimeField(
         auto_now_add=True
     )
 
     def __str__(self):
         return self.numero_documento
+
+
+class FacturaCompraDetalle(models.Model):
+
+    factura = models.ForeignKey(
+        FacturaCompra,
+        on_delete=models.CASCADE,
+        related_name="detalles"
+    )
+
+    articulo = models.ForeignKey(
+        "inventario.Repuesto",
+        on_delete=models.PROTECT,
+        related_name="detalles_factura_compra"
+    )
+
+    cantidad = models.DecimalField(
+        max_digits=15,
+        decimal_places=2
+    )
+
+    precio_unitario = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        verbose_name="Precio unitario"
+    )
+
+    class Meta:
+        verbose_name = "Detalle de factura de compra"
+        verbose_name_plural = "Detalles de factura de compra"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(cantidad__gt=0),
+                name="fyag_fact_det_qty_pos"
+            ),
+            models.CheckConstraint(
+                condition=models.Q(precio_unitario__gte=0),
+                name="fyag_fact_det_price_nonneg"
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.articulo} x {self.cantidad}"

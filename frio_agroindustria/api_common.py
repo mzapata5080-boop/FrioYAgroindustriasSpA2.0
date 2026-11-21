@@ -43,6 +43,7 @@ def schema(form):
         kind='text'
         if isinstance(f.widget,forms.HiddenInput): kind='hidden'
         elif isinstance(f.widget,forms.PasswordInput): kind='password'
+        elif isinstance(f.widget,forms.Textarea): kind='textarea'
         elif isinstance(f,forms.BooleanField): kind='checkbox'
         elif isinstance(f,forms.DateField): kind='date'
         elif isinstance(f,forms.DecimalField): kind='number'
@@ -68,7 +69,17 @@ def serialize(obj):
         d['categoria_id'] = obj.categoria_id
         d['categoria_nombre'] = obj.categoria.nombre if obj.categoria else '—'
         d['unidad_medida_display'] = obj.get_unidad_medida_display()
-    if isinstance(obj,FacturaCompra): d['proveedor_nombre']=str(obj.proveedor)
+    if isinstance(obj,FacturaCompra):
+        d['proveedor_nombre'] = str(obj.proveedor)
+        details = list(obj.detalles.all())
+        d['detalle_count'] = len(details)
+        d['detalles'] = [{
+            'id': detail.pk,
+            'articulo': detail.articulo_id,
+            'articulo_nombre': str(detail.articulo),
+            'cantidad': str(detail.cantidad),
+            'precio_unitario': str(detail.precio_unitario),
+        } for detail in details]
     if isinstance(obj,MovimientoBodega):
         d.update(fecha_registro=obj.fecha_registro,articulo=str(obj.repuesto))
         try: d['responsable']=str(obj.recepcioningreso.responsable)

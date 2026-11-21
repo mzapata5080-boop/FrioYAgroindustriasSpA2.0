@@ -207,3 +207,72 @@ test('supervisor de obra ve tarjeta de supervisión y solicitudes sin permisos d
   assert.ok(!navTabs.includes('Facturas de compra'));
   assert.ok(!navTabs.includes('Trabajadores'));
 });
+
+test('facturas permiten agregar y enviar varios artículos en una sola operación', async () => {
+  const nodes = {
+    editor: new Element('section'),
+    'editor-title': new Element('h2'),
+    'edit-form': new Element('form')
+  };
+  const payloads = [];
+  const ctx = {
+    window: { crypto: webcrypto },
+    Event: class { constructor(type) { this.type = type; } },
+    current: 'facturas',
+    metadata: {
+      articles: [
+        { id: 1, codigo_parte: 'CL-01', descripcion: 'Clavos', unidad_medida: 'kg' },
+        { id: 2, codigo_parte: 'TOR-01', descripcion: 'Tornillos', unidad_medida: 'unidad' }
+      ]
+    },
+    $: id => nodes[id],
+    node: (tag, text, cls) => {
+      const n = new Element(tag);
+      if (text !== undefined) n.textContent = text;
+      n.className = cls;
+      return n;
+    },
+    notice: () => {},
+    api: async (path, payload) => { payloads.push(payload); return {}; },
+    load: async () => {}
+  };
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../!frontend/forms.js'), 'utf8'), ctx);
+
+  ctx.showForm([
+    { name: 'numero_documento', label: 'Documento', type: 'text', required: true },
+    { name: 'monto', label: 'Monto', type: 'number', required: true, step: '0.01' },
+    { name: 'observaciones', label: 'Observaciones', type: 'textarea', required: false },
+    { name: 'detalles', label: 'Artículos', type: 'details', required: true }
+  ]);
+  const form = nodes['edit-form'];
+  const rows = form.find(n => n.id === 'invoice-details-list');
+  const addButton = form.find(n => n.textContent === 'Agregar artículo');
+  addButton.onclick();
+  assert.equal(rows.children.length, 2);
+
+  const first = rows.children[0];
+  first.children[0].children[1].value = '1';
+  first.children[1].children[1].value = '1.50';
+  first.children[2].children[1].value = '100';
+  const second = rows.children[1];
+  second.children[0].children[1].value = '2';
+  second.children[1].children[1].value = '2';
+  second.children[2].children[1].value = '50';
+
+  await form.onsubmit({ preventDefault() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(payloads[0].detalles)), [
+    { articulo: '1', cantidad: '1.50', precio_unitario: '100' },
+    { articulo: '2', cantidad: '2', precio_unitario: '50' }
+  ]);
+
+  ctx.showForm([
+    { name: 'numero_documento', label: 'Documento', type: 'text', required: true },
+    { name: 'monto', label: 'Monto', type: 'number', required: true, step: '0.01' },
+    { name: 'observaciones', label: 'Observaciones', type: 'textarea', required: false },
+    { name: 'detalles', label: 'Artículos', type: 'details', required: true }
+  ], { id: 20, numero_documento: 'F-020', monto: '50', detalles: [] });
+  assert.equal(nodes['edit-form'].find(n => n.id === 'invoice-details-list').children.length, 0);
+  await nodes['edit-form'].onsubmit({ preventDefault() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(payloads[1].detalles)), []);
+});

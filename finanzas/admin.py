@@ -2,7 +2,13 @@ from django.contrib import admin
 from .models import (
     Cliente,
     Proveedor,
-    FacturaCompra
+    FacturaCompra,
+    FacturaCompraDetalle
+)
+from .forms import (
+    FacturaCompraForm,
+    FacturaCompraDetalleForm,
+    FacturaCompraDetalleInlineFormSet
 )
 
 
@@ -45,4 +51,28 @@ class ProveedorAdmin(admin.ModelAdmin):
     readonly_fields = ('creado_el',)
 
 
-admin.site.register(FacturaCompra)
+
+class FacturaCompraDetalleInline(admin.TabularInline):
+    model = FacturaCompraDetalle
+    form = FacturaCompraDetalleForm
+    formset = FacturaCompraDetalleInlineFormSet
+    extra = 1
+
+
+@admin.register(FacturaCompra)
+class FacturaCompraAdmin(admin.ModelAdmin):
+    form = FacturaCompraForm
+    list_display = (
+        'numero_documento',
+        'proveedor',
+        'fecha',
+        'monto',
+        'cantidad_detalles'
+    )
+    search_fields = ('numero_documento', 'proveedor__razon_social')
+    readonly_fields = ('creado_el',)
+    inlines = (FacturaCompraDetalleInline,)
+
+    @admin.display(description="Artículos")
+    def cantidad_detalles(self, obj):
+        return obj.detalles.count()
