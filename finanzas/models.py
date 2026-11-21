@@ -24,6 +24,20 @@ class Cliente(models.Model):
         max_length=200
     )
 
+    representante = models.CharField(
+        max_length=150,
+        default="",
+        blank=True,
+        verbose_name="Representante"
+    )
+
+    cargo_contacto = models.CharField(
+        max_length=100,
+        default="",
+        blank=True,
+        verbose_name="Cargo del contacto"
+    )
+
     creado_el = models.DateTimeField(
         auto_now_add=True
     )
@@ -60,6 +74,19 @@ class Proveedor(models.Model):
 
     direccion = models.CharField(
         max_length=200
+    )
+
+    encargado_pagos = models.CharField(
+        max_length=150,
+        default="",
+        blank=True,
+        verbose_name="Encargado de pagos"
+    )
+
+    correo_pagos = models.EmailField(
+        default="",
+        blank=True,
+        verbose_name="Correo de pagos"
     )
 
     banco = models.CharField(

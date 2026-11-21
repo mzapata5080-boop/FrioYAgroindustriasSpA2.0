@@ -12,7 +12,9 @@ class ClienteForm(forms.ModelForm):
             'razon_social',
             'telefono',
             'correo',
-            'direccion'
+            'direccion',
+            'representante',
+            'cargo_contacto'
         ]
 
         widgets = {
@@ -20,7 +22,9 @@ class ClienteForm(forms.ModelForm):
             'razon_social': forms.TextInput(attrs={'class': 'form-control'}),
             'telefono': forms.TextInput(attrs={'class': 'form-control'}),
             'correo': forms.EmailInput(attrs={'class': 'form-control'}),
-            'direccion': forms.TextInput(attrs={'class': 'form-control'})
+            'direccion': forms.TextInput(attrs={'class': 'form-control'}),
+            'representante': forms.TextInput(attrs={'class': 'form-control'}),
+            'cargo_contacto': forms.TextInput(attrs={'class': 'form-control'})
         }
 
     def clean_rut(self):
@@ -86,6 +90,8 @@ class ProveedorForm(forms.ModelForm):
             'telefono',
             'email',
             'direccion',
+            'encargado_pagos',
+            'correo_pagos',
             'banco',
             'tipo_cuenta',
             'numero_cuenta'
@@ -98,6 +104,8 @@ class ProveedorForm(forms.ModelForm):
             'telefono': forms.TextInput(attrs={'class': 'form-control'}),
             'email': forms.EmailInput(attrs={'class': 'form-control'}),
             'direccion': forms.TextInput(attrs={'class': 'form-control'}),
+            'encargado_pagos': forms.TextInput(attrs={'class': 'form-control'}),
+            'correo_pagos': forms.EmailInput(attrs={'class': 'form-control'}),
             'banco': forms.TextInput(attrs={'class': 'form-control'}),
             'tipo_cuenta': forms.Select(attrs={'class': 'form-control'}),
             'numero_cuenta': forms.TextInput(attrs={'class': 'form-control'}),
@@ -150,6 +158,24 @@ class ProveedorForm(forms.ModelForm):
             partes.insert(0, cuerpo[-3:])
             cuerpo = cuerpo[:-3]
         return ".".join(partes) + "-" + dv
+
+    def clean(self):
+
+        cleaned = super().clean()
+
+        if not cleaned.get("banco"):
+            self.add_error(
+                "banco",
+                "Debe ingresar banco."
+            )
+
+        if not cleaned.get("numero_cuenta"):
+            self.add_error(
+                "numero_cuenta",
+                "Debe ingresar cuenta."
+            )
+
+        return cleaned
 
 
 class FacturaCompraForm(forms.ModelForm):
