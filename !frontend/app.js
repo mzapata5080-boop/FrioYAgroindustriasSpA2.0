@@ -11,6 +11,8 @@ const names = {
   ingresos: 'Ingresos de bodega',
   salidas: 'Salidas de bodega',
   kardex: 'Kardex',
+  obras: 'Obras y Proyectos',
+  presupuestos: 'Presupuestos',
   solicitudes: 'Solicitudes de materiales'
 };
 
@@ -49,7 +51,9 @@ $('home').onclick = event => { event.preventDefault(); if (user) goHome(); };
 const hiddenColumns = new Set([
   'password', 'solicitud_id', 'solicitud_salida', 'categoria_id',
   'detalles', 'detalles_fifo', 'detalle_fifo_estado',
-  'recepcion_id', 'detalle_factura_id'
+  'recepcion_id', 'detalle_factura_id',
+  'obra_id', 'cliente_id', 'supervisor_id', 'receptor_id',
+  'solicitado_por_id', 'aprobado_por_id', 'tecnicos'
 ]);
 
 async function toggleActive(resource, item) {
@@ -61,6 +65,29 @@ async function toggleActive(resource, item) {
     await api(`${resource}/${item.id}/`, { activo: nextState });
     await load(resource);
     notice(`Registro ${nextState ? 'activado' : 'desactivado'} con éxito.`);
+  } catch (e) {
+    notice(e.message, true);
+  }
+}
+
+async function handleSolicitudAction(item, accion) {
+  let payload = { accion };
+  if (accion === 'rechazar') {
+    const motivo = prompt('Motivo de rechazo (opcional):', '');
+    if (motivo === null) return;
+    payload.motivo_rechazo = motivo;
+  } else if (accion === 'cancelar') {
+    if (!confirm('¿Cancelar esta solicitud y liberar el stock reservado pendiente?')) return;
+  }
+  try {
+    await api(`solicitudes/${item.id}/`, payload);
+    await load('solicitudes');
+    const msgs = {
+      aprobar: 'Solicitud aprobada y stock reservado.',
+      rechazar: 'Solicitud rechazada.',
+      cancelar: 'Solicitud cancelada y reserva liberada.'
+    };
+    notice(msgs[accion] || 'Estado actualizado.');
   } catch (e) {
     notice(e.message, true);
   }
@@ -95,20 +122,23 @@ async function load(resource) {
   }
 
   const items = metadata.items || [];
+  const userRole = ((user && user.rol) || '').toLowerCase();
+  const isBodegaOrGerencia = !!(user && (user.is_superuser || userRole.includes('bodega') || userRole.includes('gerencia')));
 
   // Configuración de columnas por recurso
   let keys = [];
   let labels = {};
 
   if (resource === 'articulos') {
-    keys = ['codigo_parte', 'descripcion', 'categoria_nombre', 'ubicacion_bodega', 'unidad_medida_display', 'stock_actual', 'stock_minimo', 'activo'];
+    keys = ['codigo_parte', 'descripcion', 'categoria_nombre', 'ubicacion_bodega', 'unidad_medida_display', 'stock_actual', 'stock_reservado', 'stock_minimo', 'activo'];
     labels = {
       codigo_parte: 'Código interno',
       descripcion: 'Nombre',
       categoria_nombre: 'Categoría',
       ubicacion_bodega: 'Ubicación',
       unidad_medida_display: 'Unidad',
-      stock_actual: 'Stock actual',
+      stock_actual: 'Stock físico',
+      stock_reservado: 'Reservado',
       stock_minimo: 'Stock mínimo',
       activo: 'Estado'
     };
@@ -116,26 +146,53 @@ async function load(resource) {
     keys = ['nombre', 'activo'];
     labels = { nombre: 'Nombre de la categoría', activo: 'Estado' };
   } else if (resource === 'salidas') {
-    keys = ['articulo', 'cantidad', 'unidad_medida', 'numero_ot', 'responsable', 'costo_total_fifo', 'fecha_registro'];
+    keys = ['articulo', 'cantidad', 'unidad_medida', 'numero_ot', 'cliente_nombre', 'receptor', 'responsable', 'costo_total_fifo', 'fecha_registro'];
     labels = {
       articulo: 'Artículo',
       cantidad: 'Cantidad',
       unidad_medida: 'Unidad',
-      numero_ot: 'Orden de trabajo / Obra',
+      numero_ot: 'OT / Obra',
+      cliente_nombre: 'Cliente',
+      receptor: 'Recibido por',
       responsable: 'Despachado por',
       costo_total_fifo: 'Costo FIFO',
       fecha_registro: 'Fecha y hora'
     };
-  } else if (resource === 'solicitudes') {
-    keys = ['numero_ot', 'articulo', 'cantidad', 'unidad_medida', 'fecha_requerida', 'solicitante', 'observaciones', 'estado'];
+  } else if (resource === 'obras') {
+    keys = ['codigo_ot', 'nombre', 'cliente_nombre', 'tipo_servicio', 'estado', 'presupuesto_estimado', 'supervisor_nombre', 'fecha_inicio'];
     labels = {
-      numero_ot: 'Orden de trabajo / Obra',
-      articulo: 'Artículo',
-      cantidad: 'Cantidad',
+      codigo_ot: 'Código OT',
+      nombre: 'Nombre de Obra',
+      cliente_nombre: 'Cliente',
+      tipo_servicio: 'Servicio',
+      estado: 'Estado',
+      presupuesto_estimado: 'Presupuesto Est.',
+      supervisor_nombre: 'Supervisor',
+      fecha_inicio: 'Inicio'
+    };
+  } else if (resource === 'presupuestos') {
+    keys = ['obra_codigo', 'obra_nombre', 'version', 'estado', 'monto_materiales_estimado', 'monto_mano_obra_estimado', 'total_estimado', 'aprobado_por_nombre'];
+    labels = {
+      obra_codigo: 'OT',
+      obra_nombre: 'Obra',
+      version: 'Versión',
+      estado: 'Estado',
+      monto_materiales_estimado: 'Materiales',
+      monto_mano_obra_estimado: 'Mano de obra',
+      total_estimado: 'Total estimado',
+      aprobado_por_nombre: 'Aprobado por'
+    };
+  } else if (resource === 'solicitudes') {
+    keys = ['id', 'obra_codigo', 'articulo_nombre', 'cantidad_solicitada', 'cantidad_reservada', 'cantidad_entregada', 'unidad_medida', 'solicitado_por_nombre', 'estado'];
+    labels = {
+      id: 'N°',
+      obra_codigo: 'OT / Obra',
+      articulo_nombre: 'Artículo',
+      cantidad_solicitada: 'Solicitado',
+      cantidad_reservada: 'Reservado',
+      cantidad_entregada: 'Entregado',
       unidad_medida: 'Unidad',
-      fecha_requerida: 'Fecha requerida',
-      solicitante: 'Solicitante',
-      observaciones: 'Observaciones',
+      solicitado_por_nombre: 'Solicitante',
       estado: 'Estado'
     };
   } else if (resource === 'facturas') {
@@ -196,16 +253,21 @@ async function load(resource) {
   container.append(filterBar);
 
   if (!items.length) {
-    container.append(node('p', resource === 'solicitudes' ? 'No hay solicitudes pendientes.' : 'No hay registros.', 'text-muted'));
+    container.append(node('p', resource === 'solicitudes' ? 'No hay solicitudes registradas.' : 'No hay registros.', 'text-muted'));
     return;
   }
+
+  const showActionsCol = (
+    (metadata.can_write && !['ingresos', 'salidas', 'kardex', 'presupuestos', 'solicitudes'].includes(resource))
+    || resource === 'solicitudes'
+  );
 
   const table = node('table', undefined, 'table table-hover align-middle text-start');
   const head = node('thead');
   const tr = node('tr');
 
   keys.forEach(k => tr.append(node('th', labels[k] || k.replaceAll('_', ' '))));
-  if (metadata.can_write && !['ingresos', 'salidas', 'kardex'].includes(resource)) {
+  if (showActionsCol) {
     tr.append(node('th', 'Acciones'));
   }
   head.append(tr);
@@ -222,9 +284,11 @@ async function load(resource) {
       if (k === 'activo') {
         const badge = node('span', item.activo ? 'Activo' : 'Inactivo', `badge ${item.activo ? 'bg-success' : 'bg-secondary'}`);
         td.append(badge);
-      } else if (k === 'fecha_registro' || k === 'fecha') {
+      } else if (k === 'fecha_registro') {
         td.textContent = item[k] ? new Date(item[k]).toLocaleString('es-CL') : '—';
-      } else if (k === 'costo_total_fifo') {
+      } else if (k === 'fecha' || k === 'fecha_inicio') {
+        td.textContent = item[k] || '—';
+      } else if (['costo_total_fifo', 'presupuesto_estimado', 'monto_materiales_estimado', 'monto_mano_obra_estimado', 'total_estimado'].includes(k)) {
         td.textContent = (item[k] !== null && item[k] !== undefined)
           ? `$${Number(item[k]).toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CLP`
           : '—';
@@ -244,7 +308,25 @@ async function load(resource) {
       row.append(td);
     });
 
-    if (metadata.can_write && !['ingresos', 'salidas', 'kardex'].includes(resource)) {
+    if (resource === 'solicitudes') {
+      const actions = node('td');
+      if (isBodegaOrGerencia && item.estado === 'PENDIENTE') {
+        const btnApr = node('button', 'Aprobar y Reservar', 'btn btn-sm btn-success');
+        btnApr.onclick = () => handleSolicitudAction(item, 'aprobar');
+        const btnRech = node('button', 'Rechazar', 'btn btn-sm btn-outline-danger ms-1');
+        btnRech.onclick = () => handleSolicitudAction(item, 'rechazar');
+        actions.append(btnApr, btnRech);
+      }
+      if (['PENDIENTE', 'APROBADA', 'PARCIAL'].includes(item.estado)) {
+        const btnCanc = node('button', 'Cancelar', 'btn btn-sm btn-outline-secondary ms-1');
+        btnCanc.onclick = () => handleSolicitudAction(item, 'cancelar');
+        actions.append(btnCanc);
+      }
+      if (!actions.children.length) {
+        actions.textContent = '—';
+      }
+      row.append(actions);
+    } else if (metadata.can_write && !['ingresos', 'salidas', 'kardex', 'presupuestos'].includes(resource)) {
       const actions = node('td');
       const b = node('button', 'Editar', 'btn btn-sm btn-outline-primary');
       b.onclick = async () => {

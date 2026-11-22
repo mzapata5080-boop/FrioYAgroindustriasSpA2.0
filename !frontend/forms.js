@@ -267,6 +267,7 @@ function attachOutputDetails(form, context) {
  const units = { unidad: 'Unidades', m: 'Metros', kg: 'Kilogramos', l: 'Litros' };
  const article = form.elements.namedItem('articulo');
  const qty = form.elements.namedItem('cantidad');
+ const solMat = form.elements.namedItem('solicitud_material');
  if (!article || !qty) return;
 
  const box = node('div', undefined, 'mb-3');
@@ -293,27 +294,34 @@ function attachOutputDetails(form, context) {
   const code = item.unidad_medida;
   const unitLabel = units[code] || code;
   unit.value = unitLabel;
-  const stock = Number(item.stock_actual || 0);
+  const stockFisico = Number(item.stock_actual || 0);
+  const stockReservado = Number(item.stock_reservado || 0);
+  const hasSolicitud = !!(solMat && solMat.value);
+  const maxAllowed = hasSolicitud ? stockFisico : Math.max(0, stockFisico - stockReservado);
+
   qty.step = code === 'unidad' ? '1' : '0.01';
   qty.min = code === 'unidad' ? '1' : '0.01';
-  qty.max = String(stock);
+  qty.max = String(maxAllowed);
 
-  if (stock <= 0) {
-   stockNotice.textContent = `Sin existencias en bodega (Stock: 0 ${unitLabel}).`;
+  if (maxAllowed <= 0) {
+   stockNotice.textContent = `Sin existencias disponibles para despacho libre (Físico: ${stockFisico}, Reservado: ${stockReservado} ${unitLabel}).`;
    stockNotice.className = 'small fw-semibold mt-1 text-danger';
   } else {
-   stockNotice.textContent = `Stock disponible en bodega: ${stock} ${unitLabel}`;
+   stockNotice.textContent = hasSolicitud
+    ? `Despacho con reserva aprobada (Stock físico en bodega: ${stockFisico} ${unitLabel})`
+    : `Stock disponible libre: ${maxAllowed} ${unitLabel} (Físico: ${stockFisico}, Reservado: ${stockReservado})`;
    stockNotice.className = 'small fw-semibold mt-1 text-success';
   }
 
   const entered = Number(qty.value || 0);
-  if (entered > stock) {
-   stockNotice.textContent = `La cantidad (${entered}) supera el stock disponible (${stock} ${unitLabel}).`;
+  if (entered > maxAllowed) {
+   stockNotice.textContent = `La cantidad (${entered}) supera el máximo permitido (${maxAllowed} ${unitLabel}).`;
    stockNotice.className = 'small fw-semibold mt-1 text-danger';
   }
  }
  article.addEventListener('change', update);
  qty.addEventListener('input', update);
+ if (solMat) solMat.addEventListener('change', update);
  update();
 }
 
@@ -321,13 +329,14 @@ function attachSolicitudDetails(form, context) {
  const articles = new Map((context.articles || []).map(a => [String(a.id), a]));
  const units = { unidad: 'Unidades', m: 'Metros', kg: 'Kilogramos', l: 'Litros' };
  const article = form.elements.namedItem('articulo');
- const qty = form.elements.namedItem('cantidad');
+ const qty = form.elements.namedItem('cantidad_solicitada') || form.elements.namedItem('cantidad');
  if (!article || !qty) return;
 
  const box = node('div', undefined, 'mb-3');
  const unit = node('input'); unit.readOnly = true; unit.className = 'form-control'; unit.id = 'solicitud-unit';
  const label = node('label', 'Unidad de medida requerida', 'form-label'); label.htmlFor = unit.id;
- box.append(label, unit);
+ const stockHint = node('p', '', 'small text-muted mt-1');
+ box.append(label, unit, stockHint);
 
  const qtyWrap = qty.closest ? qty.closest('.mb-3') : null;
  if (qtyWrap && qtyWrap.parentNode) {
@@ -340,12 +349,16 @@ function attachSolicitudDetails(form, context) {
   const item = articles.get(article.value);
   if (!item) {
    unit.value = 'Selecciona un artículo';
+   stockHint.textContent = '';
    return;
   }
   const code = item.unidad_medida;
-  unit.value = units[code] || code;
+  const unitLabel = units[code] || code;
+  unit.value = unitLabel;
   qty.step = code === 'unidad' ? '1' : '0.01';
   qty.min = code === 'unidad' ? '1' : '0.01';
+  const disp = Math.max(0, Number(item.stock_actual || 0) - Number(item.stock_reservado || 0));
+  stockHint.textContent = `Stock libre actual en bodega: ${disp} ${unitLabel}`;
  }
  article.addEventListener('change', update);
  update();
@@ -360,6 +373,8 @@ function showForm(fields, item = {}) {
   categorias: editId ? 'Editar categoría' : 'Nueva categoría',
   ingresos: 'Registrar ingreso',
   salidas: 'Registrar salida de bodega',
+  obras: editId ? 'Editar obra' : 'Nueva obra / proyecto',
+  presupuestos: editId ? 'Editar presupuesto' : 'Nuevo presupuesto de obra',
   solicitudes: 'Nueva solicitud de materiales'
  };
  $('editor-title').textContent = titles[resource] || (editId ? 'Editar registro' : 'Nuevo registro');
@@ -373,6 +388,7 @@ function showForm(fields, item = {}) {
 
   if (field.type === 'select') {
    input = node('select');
+   if (field.multiple) input.multiple = true;
    field.choices.forEach(([value, label]) => {
     const option = node('option', label);
     option.value = value;
@@ -398,6 +414,9 @@ function showForm(fields, item = {}) {
 
   if (field.type === 'checkbox') {
    input.checked = item[field.name] !== undefined ? !!item[field.name] : true;
+  } else if (input.multiple && Array.isArray(item[field.name])) {
+   const selected = new Set(item[field.name].map(String));
+   [...input.options].forEach(opt => { opt.selected = selected.has(opt.value); });
   } else {
    input.value = item[field.name] ?? (field.name === 'solicitud_id' ? requestId() : (field.initial ?? ''));
   }
@@ -411,7 +430,7 @@ function showForm(fields, item = {}) {
   }
 
   let hint;
-  if (['ingresos', 'salidas', 'solicitudes'].includes(resource) && ['factura', 'articulo'].includes(field.name)) {
+  if (['ingresos', 'salidas', 'solicitudes'].includes(resource) && ['factura', 'articulo', 'obra'].includes(field.name) && !input.multiple) {
    hint = searchableSelect(input, field.label, wrap);
   }
 
@@ -461,7 +480,11 @@ function showForm(fields, item = {}) {
   fields.forEach(f => {
    if (f.type === 'details' || f.type === 'receipt_details') return;
    const input = form.elements.namedItem(f.name);
-   payload[f.name] = f.type === 'checkbox' ? input.checked : input.value;
+   if (input && input.multiple) {
+    payload[f.name] = [...input.selectedOptions].map(opt => opt.value);
+   } else {
+    payload[f.name] = f.type === 'checkbox' ? input.checked : input.value;
+   }
   });
   if (invoiceDetails) payload.detalles = invoiceDetails();
   if (receiptDetails) payload.recepcion_detalles = receiptDetails();

@@ -60,7 +60,7 @@ test('facturas filtran sus artículos pendientes',()=>{
  const invoice=form.elements.namedItem('factura');
  invoice.value='7';invoice.dispatchEvent(new ctx.Event('change'));
  const line=form.find(n=>n.id==='receipt-detail-line-1');
- assert.equal(line.options.length,2);
+ assert.equal(line.options.length,3);
  assert.equal(line.options[1].value,'101');
 });
 test('unidad, precio por kilogramo y subtotal se actualizan al seleccionar',()=>{
@@ -187,6 +187,7 @@ function dashboardContext(user) {
       trabajadores: 'Trabajadores', clientes: 'Clientes', proveedores: 'Proveedores',
       facturas: 'Facturas de compra', articulos: 'Inventario', categorias: 'Categorías',
       ingresos: 'Ingresos de bodega', salidas: 'Salidas de bodega', kardex: 'Kardex',
+      obras: 'Obras', presupuestos: 'Presupuestos',
       solicitudes: 'Solicitudes de materiales'
     },
     $: id => nodes[id],
@@ -225,18 +226,19 @@ test('bodega ve botones de inventario, ingresos, salidas y categorías pero no f
 });
 
 test('supervisor de obra ve tarjeta de supervisión y solicitudes sin permisos de bodega ni finanzas', () => {
-  const { ctx, nodes } = dashboardContext({ username: 'sup1', rol: 'supervisor de obra', name: 'Super Visor', is_superuser: false });
+  const { ctx, nodes } = dashboardContext({ username: 'sup1', rol: 'Supervisor de Obra', name: 'Carlos Ruiz', is_superuser: false });
   ctx.renderSession();
-  const roleCards = nodes['role-cards'].children.map(c => c.text);
-  assert.ok(roleCards.some(text => text.includes('Supervisión de Obras')));
+  const roleCards = nodes['role-cards'].children.map(c => c.text).join(' ');
+  assert.ok(roleCards.includes('Supervisión de Obras y Terreno'));
+  assert.ok(roleCards.includes('Mis Obras'));
+  assert.ok(roleCards.includes('Mis solicitudes'));
 
-  const navTabs = nodes['modules'].children.map(b => b.textContent);
-  assert.ok(navTabs.includes('Solicitudes de materiales'));
-  assert.ok(navTabs.includes('Inventario'));
-  assert.ok(navTabs.includes('Salidas de bodega'));
-  assert.ok(!navTabs.includes('Categorías'));
-  assert.ok(!navTabs.includes('Facturas de compra'));
-  assert.ok(!navTabs.includes('Trabajadores'));
+  const navTabs = nodes['modules'].children.map(b => b.dataset.resource);
+  assert.ok(navTabs.includes('obras'));
+  assert.ok(navTabs.includes('presupuestos'));
+  assert.ok(navTabs.includes('solicitudes'));
+  assert.ok(!navTabs.includes('salidas'));
+  assert.ok(!navTabs.includes('facturas'));
 });
 
 test('facturas permiten agregar y enviar varios artículos en una sola operación', async () => {

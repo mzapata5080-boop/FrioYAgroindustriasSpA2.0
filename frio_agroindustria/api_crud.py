@@ -21,7 +21,7 @@ def _resource_fields(resource, formclass, instance=None):
             'name': 'detalles',
             'label': 'Artículos de la factura',
             'type': 'details',
-            'required': True
+            'required': True,
         })
     return fields
 
@@ -80,35 +80,20 @@ def _save_invoice_details(invoice, details, replace=False):
         detail.factura = invoice
         detail.save()
 
-@require_http_methods(['GET','POST'])
-def collection(request,resource):
-    if not request.user.is_authenticated: return error('Inicia sesión.',401)
-    if resource in ('ingresos','salidas','kardex'):
-        return movements(request,resource)
-    if resource == 'solicitudes':
-        roles = ('bodega', 'gerencia', 'supervisor de obra', 'supervisor')
-        if not allowed(request.user, roles):
-            return error('No tienes permisos.', 403)
-        from inventario.api_forms import SolicitudMaterialForm
-        from inventario.models import Repuesto
-        if request.method == 'GET':
-            return JsonResponse({
-                'items': [],
-                'fields': schema(SolicitudMaterialForm()),
-                'can_write': True,
-                'can_delete': False,
-                'articles': list(Repuesto.objects.filter(activo=True).values('id', 'codigo_parte', 'descripcion', 'unidad_medida', 'stock_actual')),
-                'notice': 'Pantalla de Solicitudes preparada según los campos acordados con Benjamín. La persistencia en Supabase se conectará el 21/11.'
-            })
-        form = SolicitudMaterialForm(data(request))
-        if not form.is_valid():
-            return JsonResponse({'errors': form.errors}, status=400)
-        return error('Conexión pendiente: El guardado definitivo en base compartida de Obras y Solicitudes se completará el sábado 21/11 tras aplicar la migración 0003.', status=501)
-    if resource not in RESOURCES: return error('Recurso no encontrado.',404)
-    model,formclass,roles=RESOURCES[resource]
-    read_stock=resource=='articulos' and request.method=='GET'
-    if not read_stock and not allowed(request.user,roles): return error('No tienes permisos.',403)
-    if request.method=='GET':
+
+@require_http_methods(['GET', 'POST'])
+def collection(request, resource):
+    if not request.user.is_authenticated:
+        return error('Inicia sesión.', 401)
+    if resource in ('ingresos', 'salidas', 'kardex'):
+        return movements(request, resource)
+    if resource not in RESOURCES:
+        return error('Recurso no encontrado.', 404)
+    model, formclass, roles = RESOURCES[resource]
+    read_stock = resource == 'articulos' and request.method == 'GET'
+    if not read_stock and not allowed(request.user, roles):
+        return error('No tienes permisos.', 403)
+    if request.method == 'GET':
         qs = model.objects.order_by('pk')
         if resource == 'articulos':
             qs = qs.select_related('categoria')
@@ -116,14 +101,14 @@ def collection(request,resource):
             qs = qs.prefetch_related(
                 'detalles__articulo',
                 'detalles__recepciones',
-                'recepciones_compra'
+                'recepciones_compra',
             )
         return JsonResponse({
             'items': [serialize(x) for x in qs],
             'fields': _resource_fields(resource, formclass),
             'can_write': allowed(request.user, roles),
             'can_delete': resource in ('clientes', 'trabajadores'),
-            **_resource_options(resource)
+            **_resource_options(resource),
         })
 
     payload = data(request)
@@ -140,40 +125,51 @@ def collection(request,resource):
 
     try:
         with transaction.atomic():
-            obj=form.save()
+            obj = form.save()
             if resource == 'facturas':
                 _save_invoice_details(obj, invoice_details)
             registrar_cambio(request.user, 'CREAR', obj)
-    except IntegrityError: return error('El registro ya existe o tiene referencias inválidas.')
-    return JsonResponse({'item':serialize(obj)},status=201)
+    except IntegrityError:
+        return error('El registro ya existe o tiene referencias inválidas.')
+    return JsonResponse({'item': serialize(obj)}, status=201)
 
-@require_http_methods(['GET','POST'])
-def detail(request,resource,pk):
-    if not request.user.is_authenticated: return error('Inicia sesión.',401)
-    if resource not in RESOURCES: return error('Recurso no encontrado.',404)
-    model,formclass,roles=RESOURCES[resource]
-    if not allowed(request.user,roles): return error('No tienes permisos.',403)
-    obj=model.objects.filter(pk=pk).first()
-    if obj is None: return error('Registro no encontrado.',404)
-    if resource=='trabajadores': formclass=TrabajadorEditarForm
-    if request.method=='GET':
+
+@require_http_methods(['GET', 'POST'])
+def detail(request, resource, pk):
+    if not request.user.is_authenticated:
+        return error('Inicia sesión.', 401)
+    if resource not in RESOURCES:
+        return error('Recurso no encontrado.', 404)
+    model, formclass, roles = RESOURCES[resource]
+    if not allowed(request.user, roles):
+        return error('No tienes permisos.', 403)
+    obj = model.objects.filter(pk=pk).first()
+    if obj is None:
+        return error('Registro no encontrado.', 404)
+    if resource == 'trabajadores':
+        formclass = TrabajadorEditarForm
+    if request.method == 'GET':
         return JsonResponse({
             'item': serialize(obj),
             'fields': _resource_fields(resource, formclass, obj),
-            **_resource_options(resource)
+            **_resource_options(resource),
         })
-    d=data(request)
+    d = data(request)
     raw_details = d.pop('detalles', None) if resource == 'facturas' else None
-    if d.pop('_delete',False):
-        if resource not in ('clientes','trabajadores'): return error('No se permite eliminar este tipo de registro.',403)
-        if resource=='trabajadores' and obj.pk==request.user.pk: return error('No puedes eliminar tu propia cuenta.')
+    if d.pop('_delete', False):
+        if resource not in ('clientes', 'trabajadores'):
+            return error('No se permite eliminar este tipo de registro.', 403)
+        if resource == 'trabajadores' and obj.pk == request.user.pk:
+            return error('No puedes eliminar tu propia cuenta.')
         antes = snapshot_instance(obj)
         obj_pk = obj.pk
-        try: obj.delete()
-        except ProtectedError: return error('Hay registros asociados; no se puede eliminar.')
+        try:
+            obj.delete()
+        except ProtectedError:
+            return error('Hay registros asociados; no se puede eliminar.')
         obj.pk = obj_pk
         registrar_cambio(request.user, 'ELIMINAR', obj, antes=antes)
-        return JsonResponse({'ok':True})
+        return JsonResponse({'ok': True})
     try:
         with transaction.atomic():
             obj = model.objects.select_for_update().get(pk=pk)
@@ -186,13 +182,16 @@ def detail(request,resource,pk):
                     or RecepcionIngreso.objects.filter(factura=obj).exists()
                 )
             ):
-                return JsonResponse({
-                    'errors': {
-                        'detalles': [
-                            'No se pueden cambiar los artículos de una factura que ya tiene recepciones.'
-                        ]
-                    }
-                }, status=400)
+                return JsonResponse(
+                    {
+                        'errors': {
+                            'detalles': [
+                                'No se pueden cambiar los artículos de una factura que ya tiene recepciones.'
+                            ]
+                        }
+                    },
+                    status=400,
+                )
             merged = model_to_dict(obj)
             merged.update(d)
             form = formclass(merged, instance=obj)
@@ -203,7 +202,7 @@ def detail(request,resource,pk):
             if resource == 'facturas' and raw_details is not None:
                 invoice_details, detail_errors = _validate_invoice_details(
                     raw_details,
-                    required=obj.detalles.exists()
+                    required=obj.detalles.exists(),
                 )
                 if detail_errors:
                     return JsonResponse({'errors': detail_errors}, status=400)

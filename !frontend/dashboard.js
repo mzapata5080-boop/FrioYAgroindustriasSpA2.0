@@ -63,28 +63,34 @@ function renderSession() {
  if (can(['gerencia'])) {
   $('role-cards').append(roleCard('Administración y Gerencia', 'Módulo de gestión de personal', 'Agregar nuevos trabajadores y supervisar movimientos', 'management-card', [
    action('trabajadores', 'Gestionar Trabajadores', 'btn-primary'),
-   action('kardex', 'Ver Kardex', 'btn-kardex')
+   action('kardex', 'Ver Kardex', 'btn-kardex'),
+   action('obras', 'Obras y Proyectos', 'btn-outline-primary'),
+   action('presupuestos', 'Presupuestos', 'btn-outline-secondary')
   ]));
  }
 
  const financeButtons = () => [
   action('proveedores', 'Gestión de Proveedores', 'btn-warning'),
   action('clientes', 'Administración de Clientes', 'btn-outline-warning'),
-  action('facturas', 'Facturas de Compra', 'btn-outline-warning')
+  action('facturas', 'Facturas de Compra', 'btn-outline-warning'),
+  action('presupuestos', 'Presupuestos de Obra', 'btn-outline-secondary')
  ];
 
  if (can(['finanzas']) && !can(['gerencia'])) {
-  $('role-cards').append(roleCard('Administrativo y Finanzas', 'Módulo de gestión comercial', 'Administrar proveedores, clientes y facturas', 'finance-card', financeButtons()));
+  $('role-cards').append(roleCard('Administrativo y Finanzas', 'Módulo de gestión comercial', 'Administrar proveedores, clientes, facturas y presupuestos', 'finance-card', financeButtons()));
  } else if (can(['gerencia'])) {
   $('additional-modules').hidden = false;
   financeButtons().forEach(b => $('additional-actions').append(b));
  }
 
- if (can(['supervisor']) && !can(['gerencia', 'bodega'])) {
-  $('role-cards').append(roleCard('Supervisión de Obras y Terreno', 'Requerimiento de materiales para obras', 'Emitir solicitudes y consultar inventario disponible', 'supervisor-card', [
-   action('solicitudes', 'Nueva solicitud', 'btn-primary', true),
-   action('solicitudes', 'Ver solicitudes', 'btn-outline-primary'),
-   action('articulos', 'Consultar catálogo', 'btn-outline-secondary'),
+ if (can(['supervisor', 'obras']) && !can(['gerencia', 'bodega'])) {
+  $('role-cards').append(roleCard('Supervisión de Obras y Terreno', 'Gestión de obras, presupuestos y requerimientos', 'Crear obras, solicitar materiales y consultar catálogo', 'supervisor-card', [
+   action('obras', 'Mis Obras', 'btn-primary'),
+   action('obras', 'Nueva Obra', 'btn-outline-primary', true),
+   action('presupuestos', 'Presupuestos', 'btn-outline-secondary'),
+   action('solicitudes', 'Nueva solicitud', 'btn-success', true),
+   action('solicitudes', 'Mis solicitudes', 'btn-outline-success'),
+   action('articulos', 'Consultar catálogo', 'btn-outline-secondary')
   ]));
  }
 
@@ -98,7 +104,8 @@ function renderSession() {
    action('ingresos', 'Ver ingresos', 'btn-outline-success'),
    action('salidas', 'Registrar salida', 'btn-danger', true),
    action('salidas', 'Ver salidas', 'btn-outline-danger'),
-   action('solicitudes', 'Solicitudes de obra', 'btn-outline-info')
+   action('solicitudes', 'Solicitudes de obra', 'btn-outline-info'),
+   action('obras', 'Obras activas', 'btn-outline-secondary')
   );
  } else {
   $('warehouse-actions').append(action('articulos', 'Consultar inventario', 'btn-outline-primary'));
@@ -108,17 +115,19 @@ function renderSession() {
  for (const [key, title] of Object.entries(names)) {
   let visible = false;
   if (key === 'articulos') {
-   visible = true; // Visible para todos los autenticados
+   visible = true;
   } else if (key === 'trabajadores' || key === 'kardex') {
    visible = can(['gerencia']);
   } else if (['clientes', 'proveedores', 'facturas'].includes(key)) {
    visible = can(['gerencia', 'finanzas']);
-  } else if (['categorias', 'ingresos'].includes(key)) {
+  } else if (['categorias', 'ingresos', 'salidas'].includes(key)) {
    visible = can(['bodega', 'gerencia']);
+  } else if (key === 'obras') {
+   visible = can(['bodega', 'gerencia', 'finanzas', 'supervisor', 'obras']);
+  } else if (key === 'presupuestos') {
+   visible = can(['gerencia', 'finanzas', 'supervisor', 'obras']);
   } else if (key === 'solicitudes') {
-   visible = can(['bodega', 'gerencia', 'supervisor']);
-  } else if (key === 'salidas') {
-   visible = can(['bodega', 'gerencia']);
+   visible = can(['bodega', 'gerencia', 'supervisor', 'obras']);
   }
 
   if (!visible) continue;

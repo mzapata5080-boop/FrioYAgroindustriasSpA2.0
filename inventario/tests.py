@@ -12,7 +12,7 @@ from finanzas.models import (
     FacturaCompra,
     FacturaCompraDetalle,
     RecepcionCompra,
-    RecepcionDetalle
+    RecepcionDetalle,
 )
 from finanzas.forms import FacturaCompraDetalleForm
 
@@ -26,28 +26,57 @@ class InventoryApiTests(TestCase):
         for user, role in ((cls.warehouse, 'Bodega'), (cls.manager, 'Gerencia'), (cls.finance, 'Finanzas')):
             user.groups.add(Group.objects.create(name=role))
         cls.category = CategoriaRepuesto.objects.create(nombre='Materiales')
-        cls.article = Repuesto.objects.create(codigo_parte='CL-01', descripcion='Clavos',
-            ubicacion_bodega='A', unidad_medida='kg', categoria=cls.category)
-        cls.article_unit = Repuesto.objects.create(codigo_parte='TOR-01', descripcion='Tornillos',
-            ubicacion_bodega='B', unidad_medida='unidad', categoria=cls.category)
+        cls.article = Repuesto.objects.create(
+            codigo_parte='CL-01',
+            descripcion='Clavos',
+            ubicacion_bodega='A',
+            unidad_medida='kg',
+            categoria=cls.category,
+        )
+        cls.article_unit = Repuesto.objects.create(
+            codigo_parte='TOR-01',
+            descripcion='Tornillos',
+            ubicacion_bodega='B',
+            unidad_medida='unidad',
+            categoria=cls.category,
+        )
         cls.provider = Proveedor.objects.create(rut='11111111-1', razon_social='Proveedor')
-        cls.invoice = FacturaCompra.objects.create(proveedor=cls.provider, fecha='2026-11-18',
-            numero_documento='777', tipo_documento='Factura', monto='19900')
+        cls.invoice = FacturaCompra.objects.create(
+            proveedor=cls.provider,
+            fecha='2026-11-18',
+            numero_documento='777',
+            tipo_documento='Factura',
+            monto='19900',
+        )
         cls.invoice_line = FacturaCompraDetalle.objects.create(
-            factura=cls.invoice, articulo=cls.article, cantidad='5', precio_unitario='1990'
+            factura=cls.invoice,
+            articulo=cls.article,
+            cantidad='5',
+            precio_unitario='1990',
         )
         cls.invoice_line_unit = FacturaCompraDetalle.objects.create(
-            factura=cls.invoice, articulo=cls.article_unit, cantidad='3', precio_unitario='100'
+            factura=cls.invoice,
+            articulo=cls.article_unit,
+            cantidad='3',
+            precio_unitario='100',
         )
 
     def setUp(self):
         self.client.force_login(self.warehouse)
-        self.payload = {'solicitud_id': str(uuid.uuid4()), 'factura': self.invoice.pk,
-            'articulo': self.article.pk, 'cantidad': '1.50', 'precio': '1990.00'}
+        self.payload = {
+            'solicitud_id': str(uuid.uuid4()),
+            'factura': self.invoice.pk,
+            'recepcion_detalles': [
+                {'detalle_factura': self.invoice_line.pk, 'cantidad': '1.50'},
+            ],
+        }
 
     def post(self, path='/api/ingresos/', payload=None):
-        return self.client.post(path, data=json.dumps(self.payload if payload is None else payload),
-            content_type='application/json')
+        return self.client.post(
+            path,
+            data=json.dumps(self.payload if payload is None else payload),
+            content_type='application/json',
+        )
 
     def test_receipt_updates_stock_and_links_everything(self):
         response = self.post()
@@ -93,9 +122,10 @@ class InventoryApiTests(TestCase):
     def test_unknown_article_and_invoice_rejected(self):
         for key in ('detalle_factura', 'factura'):
             if key == 'detalle_factura':
-                payload = dict(self.payload, recepcion_detalles=[{
-                    'detalle_factura': 999999, 'cantidad': '1'
-                }])
+                payload = dict(
+                    self.payload,
+                    recepcion_detalles=[{'detalle_factura': 999999, 'cantidad': '1'}],
+                )
             else:
                 payload = dict(self.payload, factura=999999)
             self.assertEqual(self.post(payload=payload).status_code, 400)
@@ -103,13 +133,17 @@ class InventoryApiTests(TestCase):
 
     def test_quantity_validation(self):
         for quantity in ('0', '-1', '1.001', 'NaN', 'Infinity'):
-            self.assertEqual(self.post(payload=dict(
-                self.payload,
-                recepcion_detalles=[{
-                    'detalle_factura': self.invoice_line.pk,
-                    'cantidad': quantity
-                }]
-            )).status_code, 400)
+            self.assertEqual(
+                self.post(
+                    payload=dict(
+                        self.payload,
+                        recepcion_detalles=[
+                            {'detalle_factura': self.invoice_line.pk, 'cantidad': quantity}
+                        ],
+                    )
+                ).status_code,
+                400,
+            )
 
     def test_fractional_units_rejected(self):
         self.article.unidad_medida = 'unidad'
@@ -117,11 +151,13 @@ class InventoryApiTests(TestCase):
         self.assertEqual(self.post().status_code, 400)
 
     def test_negative_invoice_line_price_rejected(self):
-        form = FacturaCompraDetalleForm(data={
-            'articulo': self.article.pk,
-            'cantidad': '1',
-            'precio_unitario': '-1'
-        })
+        form = FacturaCompraDetalleForm(
+            data={
+                'articulo': self.article.pk,
+                'cantidad': '1',
+                'precio_unitario': '-1',
+            }
+        )
         self.assertFalse(form.is_valid())
         self.assertIn('precio_unitario', form.errors)
 
@@ -142,26 +178,30 @@ class InventoryApiTests(TestCase):
 
     def test_partial_receipts_create_separate_headers_and_never_exceed_ordered_quantity(self):
         self.assertEqual(self.post().status_code, 201)
-        second = dict(self.payload, solicitud_id=str(uuid.uuid4()), recepcion_detalles=[{
-            'detalle_factura': self.invoice_line.pk, 'cantidad': '2'
-        }])
-        self.assertEqual(self.post(payload=second).status_code, 201)
-        self.assertEqual(
-            RecepcionCompra.objects.filter(factura=self.invoice).count(),
-            2
+        second = dict(
+            self.payload,
+            solicitud_id=str(uuid.uuid4()),
+            recepcion_detalles=[{'detalle_factura': self.invoice_line.pk, 'cantidad': '2'}],
         )
-        third = dict(self.payload, solicitud_id=str(uuid.uuid4()), recepcion_detalles=[{
-            'detalle_factura': self.invoice_line.pk, 'cantidad': '2'
-        }])
+        self.assertEqual(self.post(payload=second).status_code, 201)
+        self.assertEqual(RecepcionCompra.objects.filter(factura=self.invoice).count(), 2)
+        third = dict(
+            self.payload,
+            solicitud_id=str(uuid.uuid4()),
+            recepcion_detalles=[{'detalle_factura': self.invoice_line.pk, 'cantidad': '2'}],
+        )
         self.assertEqual(self.post(payload=third).status_code, 400)
         self.article.refresh_from_db()
         self.assertEqual(self.article.stock_actual, Decimal('3.50'))
 
     def test_one_receipt_can_receive_multiple_invoice_lines(self):
-        payload = dict(self.payload, recepcion_detalles=[
-            {'detalle_factura': self.invoice_line.pk, 'cantidad': '1.50'},
-            {'detalle_factura': self.invoice_line_unit.pk, 'cantidad': '2'}
-        ])
+        payload = dict(
+            self.payload,
+            recepcion_detalles=[
+                {'detalle_factura': self.invoice_line.pk, 'cantidad': '1.50'},
+                {'detalle_factura': self.invoice_line_unit.pk, 'cantidad': '2'},
+            ],
+        )
         response = self.post(payload=payload)
         self.assertEqual(response.status_code, 201, response.content)
         self.assertEqual(RecepcionCompra.objects.count(), 1)
@@ -177,7 +217,7 @@ class InventoryApiTests(TestCase):
             tipo='INGRESO',
             cantidad='2',
             repuesto=self.article,
-            responsable=self.warehouse
+            responsable=self.warehouse,
         )
         RecepcionIngreso.objects.create(
             solicitud_id=legacy_request_id,
@@ -187,23 +227,22 @@ class InventoryApiTests(TestCase):
             unidad_medida='kg',
             precio_unitario_neto='1990',
             subtotal_neto='3980',
-            cantidad_disponible='2'
+            cantidad_disponible='2',
         )
         self.article.stock_actual = Decimal('2')
         self.article.save(update_fields=['stock_actual'])
         metadata = self.client.get('/api/ingresos/').json()
         line = next(item for item in metadata['invoiceDetails'] if item['id'] == self.invoice_line.pk)
         self.assertEqual(line['pendiente'], '3.00')
-        stale_retry = dict(self.payload, recepcion_detalles=[{
-            'detalle_factura': self.invoice_line.pk, 'cantidad': '1'
-        }])
+        stale_retry = dict(
+            self.payload,
+            recepcion_detalles=[{'detalle_factura': self.invoice_line.pk, 'cantidad': '1'}],
+        )
         self.assertEqual(self.post(payload=stale_retry).status_code, 409)
         overreceipt = dict(
             self.payload,
             solicitud_id=str(uuid.uuid4()),
-            recepcion_detalles=[{
-                'detalle_factura': self.invoice_line.pk, 'cantidad': '4'
-            }]
+            recepcion_detalles=[{'detalle_factura': self.invoice_line.pk, 'cantidad': '4'}],
         )
         self.assertEqual(self.post(payload=overreceipt).status_code, 400)
         self.article.refresh_from_db()
@@ -211,19 +250,24 @@ class InventoryApiTests(TestCase):
 
     def test_saving_invoice_and_lines_does_not_change_stock(self):
         self.client.force_login(self.finance)
-        response = self.post('/api/facturas/', {
-            'proveedor': self.provider.pk,
-            'fecha': '2026-11-20',
-            'numero_documento': '778',
-            'tipo_documento': 'Factura',
-            'monto': '9950',
-            'observaciones': '',
-            'detalles': [{
-                'articulo': self.article.pk,
-                'cantidad': '5',
-                'precio_unitario': '1990'
-            }]
-        })
+        response = self.post(
+            '/api/facturas/',
+            {
+                'proveedor': self.provider.pk,
+                'fecha': '2026-11-20',
+                'numero_documento': '778',
+                'tipo_documento': 'Factura',
+                'monto': '9950',
+                'observaciones': '',
+                'detalles': [
+                    {
+                        'articulo': self.article.pk,
+                        'cantidad': '5',
+                        'precio_unitario': '1990',
+                    }
+                ],
+            },
+        )
         self.assertEqual(response.status_code, 201, response.content)
         self.article.refresh_from_db()
         self.assertEqual(self.article.stock_actual, 0)
@@ -231,21 +275,34 @@ class InventoryApiTests(TestCase):
     def test_invoice_lines_cannot_change_after_a_reception(self):
         self.assertEqual(self.post().status_code, 201)
         self.client.force_login(self.finance)
-        response = self.post(f'/api/facturas/{self.invoice.pk}/', {
-            'detalles': [{
-                'articulo': self.article.pk,
-                'cantidad': '6',
-                'precio_unitario': '1990'
-            }]
-        })
+        response = self.post(
+            f'/api/facturas/{self.invoice.pk}/',
+            {
+                'detalles': [
+                    {
+                        'articulo': self.article.pk,
+                        'cantidad': '6',
+                        'precio_unitario': '1990',
+                    }
+                ]
+            },
+        )
         self.assertEqual(response.status_code, 400)
         self.invoice_line.refresh_from_db()
         self.assertEqual(self.invoice_line.cantidad, Decimal('5'))
 
     def edit_unit(self, unit):
-        return self.post(f'/api/articulos/{self.article.pk}/', {
-            'codigo_parte': 'CL-01', 'descripcion': 'Clavos', 'ubicacion_bodega': 'A',
-            'unidad_medida': unit, 'categoria': self.category.pk, 'stock_minimo': '0'})
+        return self.post(
+            f'/api/articulos/{self.article.pk}/',
+            {
+                'codigo_parte': 'CL-01',
+                'descripcion': 'Clavos',
+                'ubicacion_bodega': 'A',
+                'unidad_medida': unit,
+                'categoria': self.category.pk,
+                'stock_minimo': '0',
+            },
+        )
 
     def test_unit_change_blocked_with_stock(self):
         self.article.stock_actual = 10
@@ -294,20 +351,33 @@ class InventoryApiTests(TestCase):
     def test_csrf_required_for_authenticated_writes(self):
         client = Client(enforce_csrf_checks=True)
         client.force_login(self.warehouse)
-        self.assertEqual(client.post('/api/ingresos/', data=json.dumps(self.payload),
-            content_type='application/json').status_code, 403)
+        self.assertEqual(
+            client.post('/api/ingresos/', data=json.dumps(self.payload), content_type='application/json').status_code,
+            403,
+        )
         token = client.get('/api/session/').json()['csrfToken']
-        self.assertEqual(client.post('/api/ingresos/', data=json.dumps(self.payload),
-            content_type='application/json', HTTP_X_CSRFTOKEN=token).status_code, 201)
+        self.assertEqual(
+            client.post(
+                '/api/ingresos/',
+                data=json.dumps(self.payload),
+                content_type='application/json',
+                HTTP_X_CSRFTOKEN=token,
+            ).status_code,
+            201,
+        )
 
     def test_schema_audit_is_read_only(self):
         from io import StringIO
         from django.core.management import call_command
+
         before = (Repuesto.objects.count(), MovimientoBodega.objects.count(), RecepcionIngreso.objects.count())
         output = StringIO()
         call_command('auditar_inventario', stdout=output)
         self.assertIn('Estructura revisada', output.getvalue())
-        self.assertEqual(before, (Repuesto.objects.count(), MovimientoBodega.objects.count(), RecepcionIngreso.objects.count()))
+        self.assertEqual(
+            before,
+            (Repuesto.objects.count(), MovimientoBodega.objects.count(), RecepcionIngreso.objects.count()),
+        )
 
     def test_article_creation_defaults_to_zero_stock_and_active(self):
         payload = {
@@ -325,7 +395,6 @@ class InventoryApiTests(TestCase):
         self.assertTrue(created.activo)
         self.assertEqual(created.stock_minimo, Decimal('2'))
 
-        # Check it immediately appears in ingresos choices and articles list
         ingresos_res = self.client.get('/api/ingresos/').json()
         article_ids = [a['id'] for a in ingresos_res['articles']]
         self.assertIn(created.pk, article_ids)
@@ -360,20 +429,30 @@ class InventoryApiTests(TestCase):
         self.assertEqual(res_cat.status_code, 403)
 
     def test_article_activation_and_deactivation(self):
-        # Deactivate article
-        response = self.client.post(f'/api/articulos/{self.article.pk}/', data=json.dumps({'activo': False}), content_type='application/json')
+        response = self.client.post(
+            f'/api/articulos/{self.article.pk}/',
+            data=json.dumps({'activo': False}),
+            content_type='application/json',
+        )
         self.assertEqual(response.status_code, 200)
         self.article.refresh_from_db()
         self.assertFalse(self.article.activo)
 
-        # Reactivate article
-        response = self.client.post(f'/api/articulos/{self.article.pk}/', data=json.dumps({'activo': True}), content_type='application/json')
+        response = self.client.post(
+            f'/api/articulos/{self.article.pk}/',
+            data=json.dumps({'activo': True}),
+            content_type='application/json',
+        )
         self.assertEqual(response.status_code, 200)
         self.article.refresh_from_db()
         self.assertTrue(self.article.activo)
 
     def test_category_activation_and_deactivation(self):
-        response = self.client.post(f'/api/categorias/{self.category.pk}/', data=json.dumps({'activo': False}), content_type='application/json')
+        response = self.client.post(
+            f'/api/categorias/{self.category.pk}/',
+            data=json.dumps({'activo': False}),
+            content_type='application/json',
+        )
         self.assertEqual(response.status_code, 200)
         self.category.refresh_from_db()
         self.assertFalse(self.category.activo)
@@ -382,7 +461,11 @@ class InventoryApiTests(TestCase):
         fields = self.client.get('/api/categorias/').json()['fields']
         active = next(field for field in fields if field['name'] == 'activo')
         self.assertTrue(active['initial'])
-        response = self.client.post('/api/categorias/', data=json.dumps({'nombre': 'Refrigeración', 'activo': active['initial']}), content_type='application/json')
+        response = self.client.post(
+            '/api/categorias/',
+            data=json.dumps({'nombre': 'Refrigeración', 'activo': active['initial']}),
+            content_type='application/json',
+        )
         self.assertEqual(response.status_code, 201, response.content)
         self.assertTrue(CategoriaRepuesto.objects.get(nombre='Refrigeración').activo)
 
@@ -394,21 +477,3 @@ class InventoryApiTests(TestCase):
         self.assertEqual(art['categoria_nombre'], self.category.nombre)
         self.assertEqual(art['unidad_medida_display'], 'Kilogramos')
         self.assertEqual(art['codigo_parte'], 'CL-01')
-
-    def test_solicitudes_staged_endpoint(self):
-        res_get = self.client.get('/api/solicitudes/')
-        self.assertEqual(res_get.status_code, 200)
-        data_get = res_get.json()
-        self.assertTrue(data_get['can_write'])
-        self.assertIn('notice', data_get)
-
-        payload = {
-            'solicitud_id': str(uuid.uuid4()),
-            'numero_ot': 'OT-2026-001',
-            'articulo': self.article.pk,
-            'cantidad': '5.00',
-            'fecha_requerida': '2026-11-25',
-        }
-        res_post = self.client.post('/api/solicitudes/', data=json.dumps(payload), content_type='application/json')
-        self.assertEqual(res_post.status_code, 501)
-        self.assertIn('21/11', res_post.json().get('error', ''))

@@ -16,6 +16,14 @@ ALLOWED_EXTENSIONS = {'.pdf', '.png', '.jpg', '.jpeg', '.xlsx', '.xls', '.csv', 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024  # 10 MB
 
 
+def worker_display(user):
+    """Devuelve (id, nombre legible) de un Trabajador sin depender de strings sueltos."""
+    if not user:
+        return None, 'Sin registro'
+    full = (user.get_full_name() or '').strip()
+    return user.pk, full or user.username
+
+
 def private_storage():
     """Almacenamiento privado fuera de STATIC_ROOT y sin URL pública directa."""
     root = getattr(settings, 'PRIVATE_MEDIA_ROOT', Path(settings.BASE_DIR) / 'private_media')
@@ -68,8 +76,9 @@ def _json_safe(value):
         return value.isoformat()
     if isinstance(value, models.Model):
         return value.pk
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
     return value
-
 
 def snapshot_instance(instance, exclude=('password',)):
     """Captura estado serializable de un modelo para comparar antes/después."""

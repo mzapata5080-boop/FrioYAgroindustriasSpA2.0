@@ -1,9 +1,12 @@
-"""Validaciones del catálogo y de la recepción de materiales."""
+"""Validaciones del catálogo y de la recepción/salida de materiales."""
 from decimal import Decimal
 from django import forms
 from django.db import models
 from inventario.models import CategoriaRepuesto, Repuesto
-from finanzas.models import FacturaCompra
+from finanzas.models import Cliente, FacturaCompra
+from obras.models import Obra, SolicitudMaterial
+from usuarios.models import Trabajador
+
 
 class CategoriaForm(forms.ModelForm):
     activo = forms.BooleanField(required=False, initial=True, label='Activo')
@@ -25,13 +28,21 @@ class CategoriaForm(forms.ModelForm):
 class ArticuloForm(forms.ModelForm):
     categoria = forms.ModelChoiceField(
         queryset=CategoriaRepuesto.objects.filter(activo=True),
-        label='Categoría'
+        label='Categoría',
     )
     activo = forms.BooleanField(required=False, initial=True, label='Activo')
 
     class Meta:
         model = Repuesto
-        fields = ['codigo_parte', 'descripcion', 'categoria', 'ubicacion_bodega', 'unidad_medida', 'stock_minimo', 'activo']
+        fields = [
+            'codigo_parte',
+            'descripcion',
+            'categoria',
+            'ubicacion_bodega',
+            'unidad_medida',
+            'stock_minimo',
+            'activo',
+        ]
         labels = {
             'codigo_parte': 'Código interno',
             'descripcion': 'Nombre o descripción',
@@ -89,29 +100,62 @@ class IngresoForm(forms.Form):
 
 class SalidaForm(forms.Form):
     solicitud_id = forms.UUIDField(widget=forms.HiddenInput)
+    solicitud_material = forms.ModelChoiceField(
+        queryset=SolicitudMaterial.objects.select_related('obra__cliente', 'articulo').filter(
+            estado__in=('APROBADA', 'PARCIAL')
+        ),
+        required=False,
+        label='Solicitud aprobada (opcional)',
+    )
+    obra = forms.ModelChoiceField(
+        queryset=Obra.objects.exclude(estado='CERRADA'),
+        required=False,
+        label='Obra / Proyecto',
+    )
+    cliente = forms.ModelChoiceField(
+        queryset=Cliente.objects.all(),
+        required=False,
+        label='Cliente',
+    )
     articulo = forms.ModelChoiceField(queryset=Repuesto.objects.filter(activo=True), label='Artículo')
     cantidad = forms.DecimalField(max_digits=15, decimal_places=2, min_value=Decimal('0.01'), label='Cantidad a retirar')
-    numero_ot = forms.CharField(label='Orden de trabajo / obra (OT)', max_length=50)
+    numero_ot = forms.CharField(label='Orden de trabajo / obra (OT)', max_length=50, required=False)
+    receptor = forms.ModelChoiceField(
+        queryset=Trabajador.objects.filter(is_active=True).order_by('first_name', 'username'),
+        required=False,
+        label='Trabajador receptor',
+    )
+    receptor_nombre = forms.CharField(label='Receptor externo (si no es trabajador)', max_length=150, required=False)
+    observaciones = forms.CharField(label='Observaciones de entrega', max_length=1500, required=False)
 
     def clean(self):
         values = super().clean()
         article, quantity = values.get('articulo'), values.get('cantidad')
-        if article and quantity and article.unidad_medida == 'unidad' and quantity != quantity.to_integral_value():
-            self.add_error('cantidad', 'Debe ser una cantidad entera para artículos por unidad.')
-        return values
+        sol = values.get('solicitud_material')
+        obra = values.get('obra')
 
+        if sol:
+            if obra and obra.pk != sol.obra_id:
+                self.add_error('obra', 'La obra no coincide con la solicitud seleccionada.')
+            values['obra'] = sol.obra
+            values['cliente'] = sol.obra.cliente
+            if article and article.pk != sol.articulo_id:
+                self.add_error('articulo', 'El artículo no coincide con la solicitud seleccionada.')
+            if quantity and quantity > sol.cantidad_pendiente:
+                self.add_error('cantidad', f'La cantidad excede lo pendiente ({sol.cantidad_pendiente}).')
 
-class SolicitudMaterialForm(forms.Form):
-    solicitud_id = forms.UUIDField(widget=forms.HiddenInput)
-    numero_ot = forms.CharField(label='Orden de trabajo / Obra (OT)', max_length=50)
-    articulo = forms.ModelChoiceField(queryset=Repuesto.objects.filter(activo=True), label='Artículo solicitado')
-    cantidad = forms.DecimalField(max_digits=15, decimal_places=2, min_value=Decimal('0.01'), label='Cantidad solicitada')
-    fecha_requerida = forms.DateField(label='Fecha requerida en obra')
-    observaciones = forms.CharField(label='Observaciones / Destino', required=False, max_length=200)
+        if values.get('obra'):
+            if not (values.get('numero_ot') or '').strip():
+                values['numero_ot'] = values['obra'].codigo_ot
+            if not values.get('cliente'):
+                values['cliente'] = values['obra'].cliente
 
-    def clean(self):
-        values = super().clean()
-        article, quantity = values.get('articulo'), values.get('cantidad')
+        if not (values.get('numero_ot') or '').strip():
+            self.add_error('numero_ot', 'Indica una Orden de Trabajo o selecciona una Obra.')
+
+        if not values.get('receptor') and not (values.get('receptor_nombre') or '').strip():
+            self.add_error('receptor', 'Indica el trabajador o nombre de quien recibe el material.')
+
         if article and quantity and article.unidad_medida == 'unidad' and quantity != quantity.to_integral_value():
             self.add_error('cantidad', 'Debe ser una cantidad entera para artículos por unidad.')
         return values
