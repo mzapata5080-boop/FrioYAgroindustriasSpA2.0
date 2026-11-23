@@ -1,5 +1,6 @@
 """Operaciones comunes del catálogo con controles de rol en el servidor."""
 from django.db import IntegrityError, transaction
+from django.core.exceptions import ValidationError
 from django.db.models.deletion import ProtectedError
 from django.http import JsonResponse
 from django.forms.models import model_to_dict
@@ -93,6 +94,22 @@ def _save_invoice_details(invoice, details, replace=False):
         detail.save()
 
 
+def _resource_permissions(resource, user):
+    if resource == 'presupuestos-venta':
+        return {
+            'can_approve': user.is_superuser
+            or user.has_perm('finanzas.aprobar_presupuesto')
+        }
+    if resource == 'documentos-venta':
+        return {
+            'can_register_payments': user.is_superuser
+            or user.has_perm('finanzas.registrar_pago_documento'),
+            'can_void_documents': user.is_superuser
+            or user.has_perm('finanzas.anular_documento_venta'),
+        }
+    return {}
+
+
 @require_http_methods(['GET', 'POST'])
 def collection(request, resource):
     if not request.user.is_authenticated:
@@ -120,6 +137,7 @@ def collection(request, resource):
             'fields': _resource_fields(resource, formclass),
             'can_write': allowed(request.user, roles),
             'can_delete': resource in ('clientes', 'trabajadores'),
+            **_resource_permissions(resource, request.user),
             **_resource_options(resource),
         })
 
@@ -137,10 +155,21 @@ def collection(request, resource):
 
     try:
         with transaction.atomic():
-            obj = form.save()
+            if resource == 'notas-credito':
+                obj = form.save(commit=False)
+                obj.registrado_por = request.user
+                obj.save()
+                form.save_m2m()
+            else:
+                obj = form.save()
             if resource == 'facturas':
                 _save_invoice_details(obj, invoice_details)
             registrar_cambio(request.user, 'CREAR', obj)
+    except ValidationError as exc:
+        errors = exc.message_dict if hasattr(exc, 'message_dict') else {
+            'error': exc.messages
+        }
+        return JsonResponse({'errors': errors}, status=400)
     except IntegrityError:
         return error('El registro ya existe o tiene referencias inválidas.')
     return JsonResponse({'item': serialize(obj)}, status=201)
@@ -164,6 +193,7 @@ def detail(request, resource, pk):
         return JsonResponse({
             'item': serialize(obj),
             'fields': _resource_fields(resource, formclass, obj),
+            **_resource_permissions(resource, request.user),
             **_resource_options(resource),
         })
     d = data(request)
@@ -182,6 +212,8 @@ def detail(request, resource, pk):
         obj.pk = obj_pk
         registrar_cambio(request.user, 'ELIMINAR', obj, antes=antes)
         return JsonResponse({'ok': True})
+    if resource == 'notas-credito':
+        return error('Las notas de crédito son inmutables.', 403)
     try:
         with transaction.atomic():
             obj = model.objects.select_for_update().get(pk=pk)

@@ -6,6 +6,10 @@ const names = {
   clientes: 'Clientes',
   proveedores: 'Proveedores',
   facturas: 'Facturas de compra',
+  'presupuestos-venta': 'Presupuestos de venta',
+  'detalles-presupuesto': 'Artículos de presupuestos',
+  'documentos-venta': 'Documentos de venta',
+  'notas-credito': 'Notas de crédito',
   articulos: 'Inventario',
   categorias: 'Categorías',
   ingresos: 'Ingresos de bodega',
@@ -91,6 +95,128 @@ async function handleSolicitudAction(item, accion) {
       cancelar: 'Solicitud cancelada y reserva liberada.'
     };
     notice(msgs[accion] || 'Estado actualizado.');
+  } catch (e) {
+    notice(e.message, true);
+  }
+}
+
+async function handlePresupuestoDecision(item, accion) {
+  let motivo = '';
+  if (accion === 'rechazar') {
+    motivo = prompt('Motivo de rechazo:', '');
+    if (motivo === null) return;
+  } else if (!confirm(`¿Aprobar el presupuesto ${item.numero}?`)) {
+    return;
+  }
+  try {
+    await api(`presupuestos-venta/${item.id}/decision/`, { accion, motivo });
+    await load('presupuestos-venta');
+    notice(accion === 'aprobar' ? 'Presupuesto aprobado.' : 'Presupuesto rechazado.');
+  } catch (e) {
+    notice(e.message, true);
+  }
+}
+
+async function handleDocumentoAnular(item) {
+  const motivo = prompt('Motivo de anulación:', '');
+  if (motivo === null) return;
+  try {
+    await api(`documentos-venta/${item.id}/anular/`, { motivo });
+    await load('documentos-venta');
+    notice('Documento anulado.');
+  } catch (e) {
+    notice(e.message, true);
+  }
+}
+
+async function openDocumentoPagos(documento) {
+  try {
+    const data = await api(`documentos-venta/${documento.id}/pagos/`);
+    $('editor').hidden = false;
+    $('editor-title').textContent = `Pagos: ${documento.numero_documento}`;
+    const form = $('edit-form');
+    form.replaceChildren();
+
+    const heading = node(
+      'p',
+      `Total: $${Number(data.total).toLocaleString('es-CL')} CLP · Saldo: $${Number(data.saldo).toLocaleString('es-CL')} CLP`,
+      'text-muted'
+    );
+    form.append(heading);
+    const table = node('table', undefined, 'table table-sm table-striped');
+    const head = node('thead'), headerRow = node('tr');
+    ['Fecha', 'Monto', 'Método', 'Referencia', 'Registrado por'].forEach(
+      title => headerRow.append(node('th', title))
+    );
+    head.append(headerRow);
+    table.append(head);
+    const body = node('tbody');
+    data.items.forEach(payment => {
+      const row = node('tr');
+      [
+        payment.fecha_pago,
+        `$${Number(payment.monto).toLocaleString('es-CL')} CLP`,
+        payment.metodo,
+        payment.referencia || '—',
+        payment.registrado_por_nombre
+      ].forEach(value => row.append(node('td', String(value ?? '—'))));
+      body.append(row);
+    });
+    table.append(body);
+    form.append(table);
+    if (!data.items.length) form.append(node('p', 'Aún no hay pagos registrados.', 'text-muted'));
+
+    if (data.can_register) {
+      const amountLabel = node('label', 'Monto', 'form-label');
+      const amount = node('input', undefined, 'form-control mb-2');
+      amount.name = 'monto'; amount.type = 'number'; amount.min = '0.01';
+      amount.step = '0.01'; amount.required = true;
+      const dateLabel = node('label', 'Fecha de pago', 'form-label');
+      const date = node('input', undefined, 'form-control mb-2');
+      date.name = 'fecha_pago'; date.type = 'date';
+      date.value = new Date().toISOString().slice(0, 10); date.required = true;
+      const methodLabel = node('label', 'Método', 'form-label');
+      const method = node('select', undefined, 'form-select mb-2');
+      method.name = 'metodo';
+      [
+        ['TRANSFERENCIA', 'Transferencia'], ['EFECTIVO', 'Efectivo'],
+        ['TARJETA', 'Tarjeta'], ['CHEQUE', 'Cheque'], ['OTRO', 'Otro']
+      ].forEach(([value, label]) => {
+        const option = node('option', label); option.value = value; method.append(option);
+      });
+      const referenceLabel = node('label', 'Referencia', 'form-label');
+      const reference = node('input', undefined, 'form-control mb-2');
+      reference.name = 'referencia';
+      const observationsLabel = node('label', 'Observaciones', 'form-label');
+      const observations = node('textarea', undefined, 'form-control mb-3');
+      observations.name = 'observaciones';
+      const submit = node('button', 'Registrar pago', 'btn btn-primary');
+      submit.type = 'submit';
+      form.append(
+        amountLabel, amount, dateLabel, date, methodLabel, method,
+        referenceLabel, reference, observationsLabel, observations, submit
+      );
+      form.onsubmit = async event => {
+        event.preventDefault();
+        if (!form.reportValidity() || submit.disabled) return;
+        submit.disabled = true;
+        try {
+          await api(`documentos-venta/${documento.id}/pagos/`, Object.fromEntries(new FormData(form)));
+          await load('documentos-venta');
+          notice('Pago registrado.');
+          if (current === 'documentos-venta') await openDocumentoPagos(documento);
+        } catch (e) {
+          notice(e.message, true);
+        } finally {
+          submit.disabled = false;
+        }
+      };
+    }
+
+    const close = node('button', 'Cerrar', 'btn btn-outline-secondary mt-2');
+    close.type = 'button'; close.onclick = () => { $('editor').hidden = true; };
+    form.append(close);
+    $('editor').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
     notice(e.message, true);
   }
@@ -227,6 +353,46 @@ async function load(resource) {
       total_estimado: 'Total estimado',
       aprobado_por_nombre: 'Aprobado por'
     };
+  } else if (resource === 'presupuestos-venta') {
+    keys = ['numero', 'cliente_nombre', 'obra_codigo', 'fecha', 'vencimiento', 'estado', 'total'];
+    labels = {
+      numero: 'N° presupuesto',
+      cliente_nombre: 'Cliente',
+      obra_codigo: 'OT',
+      fecha: 'Fecha',
+      vencimiento: 'Vencimiento',
+      estado: 'Estado',
+      total: 'Total'
+    };
+  } else if (resource === 'detalles-presupuesto') {
+    keys = ['presupuesto_numero', 'articulo_nombre', 'cantidad', 'precio_unitario', 'subtotal'];
+    labels = {
+      presupuesto_numero: 'Presupuesto',
+      articulo_nombre: 'Artículo',
+      cantidad: 'Cantidad',
+      precio_unitario: 'Precio unitario',
+      subtotal: 'Subtotal'
+    };
+  } else if (resource === 'documentos-venta') {
+    keys = ['numero_documento', 'cliente_nombre', 'fecha', 'vencimiento', 'total', 'saldo', 'anulado'];
+    labels = {
+      numero_documento: 'N° documento',
+      cliente_nombre: 'Cliente',
+      fecha: 'Fecha',
+      vencimiento: 'Vencimiento',
+      total: 'Total',
+      saldo: 'Saldo',
+      anulado: 'Anulado'
+    };
+  } else if (resource === 'notas-credito') {
+    keys = ['numero_documento', 'documento_numero', 'fecha', 'motivo', 'monto'];
+    labels = {
+      numero_documento: 'N° nota de crédito',
+      documento_numero: 'Documento original',
+      fecha: 'Fecha',
+      motivo: 'Motivo',
+      monto: 'Monto'
+    };
   } else if (resource === 'solicitudes') {
     keys = ['id', 'obra_codigo', 'articulo_nombre', 'cantidad_solicitada', 'cantidad_reservada', 'cantidad_entregada', 'unidad_medida', 'solicitado_por_nombre', 'estado'];
     labels = {
@@ -339,9 +505,9 @@ async function load(resource) {
         td.append(badge);
       } else if (k === 'fecha_registro') {
         td.textContent = item[k] ? new Date(item[k]).toLocaleString('es-CL') : '—';
-      } else if (k === 'fecha' || k === 'fecha_inicio') {
+      } else if (['fecha', 'fecha_inicio', 'vencimiento', 'fecha_pago'].includes(k)) {
         td.textContent = item[k] || '—';
-      } else if (['monto', 'costo_total_fifo', 'presupuesto_estimado', 'monto_materiales_estimado', 'monto_mano_obra_estimado', 'total_estimado'].includes(k)) {
+      } else if (['monto', 'costo_total_fifo', 'presupuesto_estimado', 'monto_materiales_estimado', 'monto_mano_obra_estimado', 'total_estimado', 'total', 'saldo', 'precio_unitario', 'subtotal'].includes(k)) {
         td.textContent = (item[k] !== null && item[k] !== undefined)
           ? `$${Number(item[k]).toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} CLP`
           : '—';
@@ -385,6 +551,47 @@ async function load(resource) {
       }
       if (!actions.children.length) {
         actions.textContent = '—';
+      }
+      row.append(actions);
+    } else if (resource === 'presupuestos-venta') {
+      const actions = node('td');
+      if (metadata.can_write) {
+        const edit = node('button', 'Editar', 'btn btn-sm btn-outline-primary');
+        edit.onclick = async () => {
+          try {
+            const detail = await api(`${resource}/${item.id}/`);
+            showForm(detail.fields, detail.item);
+          } catch (e) { notice(e.message, true); }
+        };
+        actions.append(edit);
+      }
+      if (metadata.can_approve && item.estado === 'BORRADOR') {
+        const approve = node('button', 'Aprobar', 'btn btn-sm btn-success ms-2');
+        approve.onclick = () => handlePresupuestoDecision(item, 'aprobar');
+        const reject = node('button', 'Rechazar', 'btn btn-sm btn-outline-danger ms-1');
+        reject.onclick = () => handlePresupuestoDecision(item, 'rechazar');
+        actions.append(approve, reject);
+      }
+      row.append(actions);
+    } else if (resource === 'documentos-venta') {
+      const actions = node('td');
+      if (metadata.can_write) {
+        const edit = node('button', 'Editar', 'btn btn-sm btn-outline-primary');
+        edit.onclick = async () => {
+          try {
+            const detail = await api(`${resource}/${item.id}/`);
+            showForm(detail.fields, detail.item);
+          } catch (e) { notice(e.message, true); }
+        };
+        actions.append(edit);
+      }
+      const payments = node('button', 'Pagos / historial', 'btn btn-sm btn-outline-success ms-1');
+      payments.onclick = () => openDocumentoPagos(item);
+      actions.append(payments);
+      if (metadata.can_void_documents && !item.anulado) {
+        const cancel = node('button', 'Anular', 'btn btn-sm btn-outline-danger ms-1');
+        cancel.onclick = () => handleDocumentoAnular(item);
+        actions.append(cancel);
       }
       row.append(actions);
     } else if (metadata.can_write && !['ingresos', 'salidas', 'kardex', 'presupuestos'].includes(resource)) {

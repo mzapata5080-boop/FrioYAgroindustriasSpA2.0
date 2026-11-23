@@ -3,6 +3,7 @@ from django.urls import path
 from . import api
 from inventario import operaciones_api
 from obras import api as obras_api
+from finanzas import api as finanzas_api
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -19,6 +20,9 @@ urlpatterns = [
     path('api/operaciones/', operaciones_api.operaciones),
     path('api/operaciones/<uuid:operacion_id>/archivos/', operaciones_api.documentos),
     path('api/operaciones/<uuid:operacion_id>/archivos/<int:archivo_id>/', operaciones_api.descargar_documento),
+    path('api/documentos-venta/<int:pk>/pagos/', finanzas_api.documento_pagos),
+    path('api/presupuestos-venta/<int:pk>/decision/', finanzas_api.presupuesto_decision),
+    path('api/documentos-venta/<int:pk>/anular/', finanzas_api.documento_anular),
     path('api/<str:resource>/', api.collection),
     path('api/<str:resource>/<int:pk>/', api.detail),
 ]

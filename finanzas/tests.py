@@ -1,16 +1,33 @@
 from decimal import Decimal
+from datetime import date
+import json
+from django.contrib.auth.models import Group, Permission
+from django.core.exceptions import ValidationError
 from django.test import TestCase
 from frio_agroindustria.api_common import schema, serialize
 from frio_agroindustria.api_resources import RESOURCES
 from frio_agroindustria.api_crud import _validate_invoice_details
 from inventario.models import CategoriaRepuesto, Repuesto
+from obras.models import Obra
+from usuarios.models import Trabajador
 from .forms import (
     ClienteForm,
     ProveedorForm,
     FacturaCompraForm,
-    FacturaCompraDetalleForm
+    FacturaCompraDetalleForm,
+    PresupuestoDetalleForm,
 )
-from .models import Cliente, Proveedor, FacturaCompra, FacturaCompraDetalle
+from .models import (
+    Cliente,
+    Proveedor,
+    FacturaCompra,
+    FacturaCompraDetalle,
+    Presupuesto,
+    PresupuestoDetalle,
+    DocumentoVenta,
+    PagoDocumento,
+    NotaCredito,
+)
 
 
 class ContactFieldsTests(TestCase):
@@ -257,3 +274,221 @@ class FacturaCompraDetailsTests(TestCase):
         }], existing_details=invoice.detalles.all())
         self.assertIsNone(details)
         self.assertIn('detalles.0.precio_unitario', errors)
+
+
+class NuevasFuncionesFinancierasTests(TestCase):
+    def setUp(self):
+        self.usuario = Trabajador.objects.create_user(
+            username="usuario-finanzas",
+            password="prueba-segura-123",
+        )
+        grupo, _ = Group.objects.get_or_create(name="Finanzas")
+        self.usuario.groups.add(grupo)
+        self.cliente = Cliente.objects.create(
+            rut="76.123.456-7",
+            razon_social="Cliente comercial",
+            telefono="123",
+            correo="cliente@ejemplo.cl",
+            direccion="Dirección",
+        )
+        categoria = CategoriaRepuesto.objects.create(nombre="Venta")
+        self.articulo = Repuesto.objects.create(
+            codigo_parte="VENTA-01",
+            descripcion="Artículo de venta",
+            ubicacion_bodega="A-1",
+            unidad_medida="unidad",
+            categoria=categoria,
+            stock_actual=Decimal("12"),
+        )
+        self.obra = Obra.objects.create(
+            codigo_ot="OT-VENTA-01",
+            nombre="Obra comercial",
+            cliente=self.cliente,
+            supervisor=self.usuario,
+        )
+
+    def test_budget_has_priced_lines_and_requires_permission_to_approve(self):
+        presupuesto = Presupuesto.objects.create(
+            numero="PRES-001",
+            cliente=self.cliente,
+            obra=self.obra,
+        )
+        fractional_unit = PresupuestoDetalleForm(data={
+            "presupuesto": presupuesto.pk,
+            "articulo": self.articulo.pk,
+            "cantidad": "1.25",
+            "precio_unitario": "150.00",
+        })
+        self.assertFalse(fractional_unit.is_valid())
+        self.assertIn("cantidad", fractional_unit.errors)
+        detalle = PresupuestoDetalle.objects.create(
+            presupuesto=presupuesto,
+            articulo=self.articulo,
+            cantidad=Decimal("2"),
+            precio_unitario=Decimal("150.00"),
+        )
+        self.assertEqual(detalle.subtotal, Decimal("300.00"))
+        self.assertEqual(presupuesto.total, Decimal("300.00"))
+
+        self.client.force_login(self.usuario)
+        response = self.client.post(
+            f"/api/presupuestos-venta/{presupuesto.pk}/decision/",
+            data=json.dumps({"accion": "aprobar"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+        permission = Permission.objects.get(
+            content_type__app_label="finanzas",
+            codename="aprobar_presupuesto",
+        )
+        self.usuario.user_permissions.add(permission)
+        response = self.client.post(
+            f"/api/presupuestos-venta/{presupuesto.pk}/decision/",
+            data=json.dumps({"accion": "aprobar"}),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        presupuesto.refresh_from_db()
+        self.assertEqual(presupuesto.estado, "APROBADO")
+
+    def test_partial_payments_and_credit_notes_update_financial_balance_only(self):
+        documento = DocumentoVenta.objects.create(
+            numero_documento="VTA-001",
+            cliente=self.cliente,
+            obra=self.obra,
+            fecha=date(2026, 11, 23),
+            vencimiento=date(2026, 12, 23),
+            total=Decimal("1000.00"),
+        )
+        PagoDocumento.objects.create(
+            documento=documento,
+            monto=Decimal("200.00"),
+            registrado_por=self.usuario,
+        )
+        PagoDocumento.objects.create(
+            documento=documento,
+            monto=Decimal("300.00"),
+            registrado_por=self.usuario,
+        )
+        NotaCredito.objects.create(
+            documento=documento,
+            numero_documento="NC-001",
+            motivo="Ajuste comercial",
+            monto=Decimal("100.00"),
+            registrado_por=self.usuario,
+        )
+
+        documento.refresh_from_db()
+        self.articulo.refresh_from_db()
+        self.assertEqual(documento.saldo, Decimal("400.00"))
+        self.assertEqual(documento.pagos.count(), 2)
+        self.assertEqual(documento.notas_credito.count(), 1)
+        self.assertEqual(self.articulo.stock_actual, Decimal("12"))
+
+        with self.assertRaises(ValidationError):
+            PagoDocumento.objects.create(
+                documento=documento,
+                monto=Decimal("400.01"),
+                registrado_por=self.usuario,
+            )
+
+    def test_payment_endpoint_checks_permission(self):
+        documento = DocumentoVenta.objects.create(
+            numero_documento="VTA-002",
+            cliente=self.cliente,
+            fecha=date(2026, 11, 23),
+            vencimiento=date(2026, 12, 23),
+            total=Decimal("500.00"),
+        )
+        self.client.force_login(self.usuario)
+        payload = {
+            "monto": "125.00",
+            "fecha_pago": "2026-11-23",
+            "metodo": "TRANSFERENCIA",
+            "referencia": "TRX-001",
+        }
+        response = self.client.post(
+            f"/api/documentos-venta/{documento.pk}/pagos/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+        permission = Permission.objects.get(
+            content_type__app_label="finanzas",
+            codename="registrar_pago_documento",
+        )
+        self.usuario.user_permissions.add(permission)
+        response = self.client.post(
+            f"/api/documentos-venta/{documento.pk}/pagos/",
+            data=json.dumps(payload),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        documento.refresh_from_db()
+        self.assertEqual(documento.saldo, Decimal("375.00"))
+
+    def test_credit_note_resource_and_document_anulation_permissions(self):
+        documento = DocumentoVenta.objects.create(
+            numero_documento="VTA-003",
+            cliente=self.cliente,
+            fecha=date(2026, 11, 23),
+            vencimiento=date(2026, 12, 23),
+            total=Decimal("800.00"),
+        )
+        self.client.force_login(self.usuario)
+        response = self.client.post(
+            "/api/notas-credito/",
+            data=json.dumps({
+                "documento": documento.pk,
+                "numero_documento": "NC-API-001",
+                "fecha": "2026-11-23",
+                "motivo": "Ajuste solicitado por el cliente",
+                "monto": "100.00",
+                "observaciones": "",
+            }),
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.assertEqual(
+            NotaCredito.objects.get(numero_documento="NC-API-001").registrado_por,
+            self.usuario,
+        )
+
+        payload = json.dumps({"motivo": "Documento emitido por error"})
+        response = self.client.post(
+            f"/api/documentos-venta/{documento.pk}/anular/",
+            data=payload,
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 403)
+
+        permission = Permission.objects.get(
+            content_type__app_label="finanzas",
+            codename="anular_documento_venta",
+        )
+        self.usuario.user_permissions.add(permission)
+        response = self.client.post(
+            f"/api/documentos-venta/{documento.pk}/anular/",
+            data=payload,
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("pagos o notas de crédito", response.json()["errors"]["error"][0])
+
+        documento_sin_movimientos = DocumentoVenta.objects.create(
+            numero_documento="VTA-004",
+            cliente=self.cliente,
+            fecha=date(2026, 11, 23),
+            vencimiento=date(2026, 12, 23),
+            total=Decimal("500.00"),
+        )
+        response = self.client.post(
+            f"/api/documentos-venta/{documento_sin_movimientos.pk}/anular/",
+            data=payload,
+            content_type="application/json",
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        documento_sin_movimientos.refresh_from_db()
+        self.assertTrue(documento_sin_movimientos.anulado)

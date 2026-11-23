@@ -6,7 +6,14 @@ from django.conf import settings
 from django.http import JsonResponse, HttpResponse
 from django.forms.models import model_to_dict
 from usuarios.models import Trabajador
-from finanzas.models import FacturaCompra
+from finanzas.models import (
+    FacturaCompra,
+    Presupuesto,
+    PresupuestoDetalle,
+    DocumentoVenta,
+    PagoDocumento,
+    NotaCredito,
+)
 from inventario.models import MovimientoBodega, RecepcionIngreso, Repuesto
 
 class CorsMiddleware:
@@ -97,6 +104,45 @@ def serialize(obj):
             } for receipt in RecepcionIngreso.objects.filter(factura=obj).select_related(
                 'movimiento__repuesto'
             ).order_by('movimiento__fecha_registro', 'movimiento_id')]
+    if isinstance(obj, Presupuesto):
+        d.update(
+            cliente_nombre=str(obj.cliente),
+            obra_codigo=obj.obra.codigo_ot if obj.obra_id else '',
+            obra_nombre=obj.obra.nombre if obj.obra_id else '',
+            total=str(obj.total),
+            detalles=[{
+                'id': detalle.pk,
+                'articulo': detalle.articulo_id,
+                'articulo_nombre': str(detalle.articulo),
+                'cantidad': str(detalle.cantidad),
+                'precio_unitario': str(detalle.precio_unitario),
+                'subtotal': str(detalle.subtotal),
+            } for detalle in obj.detalles.select_related('articulo')],
+        )
+    if isinstance(obj, PresupuestoDetalle):
+        d.update(
+            presupuesto_numero=obj.presupuesto.numero,
+            articulo_nombre=str(obj.articulo),
+            subtotal=str(obj.subtotal),
+        )
+    if isinstance(obj, DocumentoVenta):
+        d.update(
+            cliente_nombre=str(obj.cliente),
+            obra_codigo=obj.obra.codigo_ot if obj.obra_id else '',
+            obra_nombre=obj.obra.nombre if obj.obra_id else '',
+            pagos_count=obj.pagos.count(),
+            notas_credito_count=obj.notas_credito.count(),
+        )
+    if isinstance(obj, PagoDocumento):
+        d.update(
+            documento_numero=obj.documento.numero_documento,
+            registrado_por_nombre=(
+                obj.registrado_por.get_full_name().strip()
+                or obj.registrado_por.username
+            ),
+        )
+    if isinstance(obj, NotaCredito):
+        d.update(documento_numero=obj.documento.numero_documento)
     if isinstance(obj,MovimientoBodega):
         d.update(fecha_registro=obj.fecha_registro,articulo=str(obj.repuesto))
         try: d['responsable']=str(obj.recepcioningreso.responsable)

@@ -6,7 +6,12 @@ from .models import (
     Cliente,
     Proveedor,
     FacturaCompra,
-    FacturaCompraDetalle
+    FacturaCompraDetalle,
+    Presupuesto,
+    PresupuestoDetalle,
+    DocumentoVenta,
+    PagoDocumento,
+    NotaCredito,
 )
 
 class ClienteForm(forms.ModelForm):
@@ -373,3 +378,183 @@ class RecepcionDetalleForm(forms.Form):
                 "La cantidad debe ser entera para artículos por unidad."
             )
         return cleaned_data
+
+
+class PresupuestoForm(forms.ModelForm):
+    class Meta:
+        model = Presupuesto
+        fields = [
+            "numero", "cliente", "obra", "fecha", "vencimiento", "observaciones"
+        ]
+        widgets = {
+            "numero": forms.TextInput(attrs={"class": "form-control"}),
+            "cliente": forms.Select(attrs={"class": "form-select"}),
+            "obra": forms.Select(attrs={"class": "form-select"}),
+            "fecha": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "vencimiento": forms.DateInput(
+                attrs={"type": "date", "class": "form-control"}
+            ),
+            "observaciones": forms.Textarea(
+                attrs={"class": "form-control", "rows": 3}
+            ),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.instance.pk and self.instance.estado != "BORRADOR":
+            raise ValidationError("Solo se pueden editar presupuestos en borrador.")
+        return cleaned
+
+
+class PresupuestoDetalleForm(forms.ModelForm):
+    class Meta:
+        model = PresupuestoDetalle
+        fields = ["presupuesto", "articulo", "cantidad", "precio_unitario"]
+        widgets = {
+            "presupuesto": forms.Select(attrs={"class": "form-select"}),
+            "articulo": forms.Select(attrs={"class": "form-select"}),
+            "cantidad": forms.NumberInput(
+                attrs={"class": "form-control", "min": "0.01", "step": "0.01"}
+            ),
+            "precio_unitario": forms.NumberInput(
+                attrs={"class": "form-control", "min": "0", "step": "0.01"}
+            ),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        presupuesto = cleaned.get("presupuesto")
+        if presupuesto and presupuesto.estado != "BORRADOR":
+            raise ValidationError(
+                "No se puede modificar el detalle de un presupuesto resuelto."
+            )
+        cantidad = cleaned.get("cantidad")
+        articulo = cleaned.get("articulo")
+        if (
+            cantidad is not None
+            and articulo
+            and articulo.unidad_medida == "unidad"
+            and cantidad != cantidad.to_integral_value()
+        ):
+            self.add_error(
+                "cantidad",
+                "La cantidad debe ser entera para artículos por unidad.",
+            )
+        return cleaned
+
+
+class DocumentoVentaForm(forms.ModelForm):
+    class Meta:
+        model = DocumentoVenta
+        fields = [
+            "numero_documento", "cliente", "obra", "fecha", "vencimiento",
+            "total", "observaciones",
+        ]
+        widgets = {
+            "numero_documento": forms.TextInput(attrs={"class": "form-control"}),
+            "cliente": forms.Select(attrs={"class": "form-select"}),
+            "obra": forms.Select(attrs={"class": "form-select"}),
+            "fecha": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "vencimiento": forms.DateInput(
+                attrs={"type": "date", "class": "form-control"}
+            ),
+            "total": forms.NumberInput(
+                attrs={"class": "form-control", "min": "0.01", "step": "0.01"}
+            ),
+            "observaciones": forms.Textarea(
+                attrs={"class": "form-control", "rows": 3}
+            ),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        if self.instance.pk and self.instance.anulado:
+            raise ValidationError("No se puede editar un documento anulado.")
+        total = cleaned.get("total")
+        if (
+            self.instance.pk
+            and total is not None
+            and total != self.instance.total
+            and (self.instance.pagos.exists() or self.instance.notas_credito.exists())
+        ):
+            self.add_error(
+                "total",
+                "No se puede cambiar el total con pagos o notas de crédito registrados.",
+            )
+        return cleaned
+
+
+class PagoDocumentoForm(forms.ModelForm):
+    class Meta:
+        model = PagoDocumento
+        fields = [
+            "documento", "monto", "fecha_pago", "metodo", "referencia",
+            "observaciones",
+        ]
+        widgets = {
+            "documento": forms.Select(attrs={"class": "form-select"}),
+            "monto": forms.NumberInput(
+                attrs={"class": "form-control", "min": "0.01", "step": "0.01"}
+            ),
+            "fecha_pago": forms.DateInput(
+                attrs={"type": "date", "class": "form-control"}
+            ),
+            "metodo": forms.Select(attrs={"class": "form-select"}),
+            "referencia": forms.TextInput(attrs={"class": "form-control"}),
+            "observaciones": forms.Textarea(
+                attrs={"class": "form-control", "rows": 2}
+            ),
+        }
+
+    def clean_monto(self):
+        monto = self.cleaned_data["monto"]
+        documento = self.cleaned_data.get("documento")
+        if monto <= 0:
+            raise forms.ValidationError("El monto debe ser mayor que cero.")
+        if documento and monto > documento.saldo:
+            raise forms.ValidationError("El pago supera el saldo pendiente.")
+        return monto
+
+    def clean_documento(self):
+        documento = self.cleaned_data["documento"]
+        if documento.anulado:
+            raise forms.ValidationError(
+                "No se pueden registrar pagos en un documento anulado."
+            )
+        return documento
+
+
+class NotaCreditoForm(forms.ModelForm):
+    class Meta:
+        model = NotaCredito
+        fields = [
+            "documento", "numero_documento", "fecha", "motivo", "monto",
+            "observaciones",
+        ]
+        widgets = {
+            "documento": forms.Select(attrs={"class": "form-select"}),
+            "numero_documento": forms.TextInput(attrs={"class": "form-control"}),
+            "fecha": forms.DateInput(attrs={"type": "date", "class": "form-control"}),
+            "motivo": forms.Textarea(
+                attrs={"class": "form-control", "rows": 3}
+            ),
+            "monto": forms.NumberInput(
+                attrs={"class": "form-control", "min": "0.01", "step": "0.01"}
+            ),
+            "observaciones": forms.Textarea(
+                attrs={"class": "form-control", "rows": 2}
+            ),
+        }
+
+    def clean(self):
+        cleaned = super().clean()
+        documento = cleaned.get("documento")
+        monto = cleaned.get("monto")
+        motivo = cleaned.get("motivo")
+        if documento and documento.anulado:
+            self.add_error("documento", "El documento original está anulado.")
+        if documento and monto is not None and monto > documento.saldo:
+            self.add_error("monto", "El monto supera el saldo pendiente.")
+        if motivo is not None and not motivo.strip():
+            self.add_error("motivo", "Indique el motivo de la nota de crédito.")
+        return cleaned
