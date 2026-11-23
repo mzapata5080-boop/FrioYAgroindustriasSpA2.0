@@ -73,15 +73,15 @@ function renderSession() {
   action('proveedores', 'Gestión de Proveedores', 'btn-warning'),
   action('clientes', 'Administración de Clientes', 'btn-outline-warning'),
   action('facturas', 'Facturas de Compra', 'btn-outline-warning'),
-   action('presupuestos-venta', 'Presupuestos de Venta', 'btn-outline-secondary'),
-   action('detalles-presupuesto', 'Artículos de Presupuestos', 'btn-outline-secondary'),
-   action('documentos-venta', 'Documentos de Venta', 'btn-outline-primary'),
-   action('notas-credito', 'Notas de Crédito', 'btn-outline-primary'),
+  action('presupuestos-venta', 'Presupuestos de Venta', 'btn-outline-secondary'),
+  action('detalles-presupuesto', 'Artículos de Presupuestos', 'btn-outline-secondary'),
+  action('documentos-venta', 'Documentos de Venta', 'btn-outline-primary'),
+  action('notas-credito', 'Notas de Crédito', 'btn-outline-primary'),
   action('presupuestos', 'Presupuestos de Obra', 'btn-outline-secondary')
  ];
 
  if (can(['finanzas']) && !can(['gerencia'])) {
-  $('role-cards').append(roleCard('Administrativo y Finanzas', 'Módulo de gestión comercial', 'Administrar proveedores, clientes, facturas y presupuestos', 'finance-card', financeButtons()));
+  $('role-cards').append(roleCard('Administrativo y Finanzas', 'Módulo de gestión comercial', 'Administrar clientes, proveedores, presupuestos, documentos y pagos', 'finance-card', financeButtons()));
  } else if (can(['gerencia'])) {
   $('additional-modules').hidden = false;
   financeButtons().forEach(b => $('additional-actions').append(b));

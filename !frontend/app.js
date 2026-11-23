@@ -27,6 +27,83 @@ function node(tag, text, cls) {
   return n;
 }
 
+function formatFinanceAmount(value) {
+  const amount = Number(value || 0);
+  return `$${(Number.isFinite(amount) ? amount : 0).toLocaleString('es-CL', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 2
+  })} CLP`;
+}
+
+function sumFinanceAmount(items, field) {
+  return items.reduce((sum, item) => {
+    const value = Number(item[field] || 0);
+    return sum + (Number.isFinite(value) ? value : 0);
+  }, 0);
+}
+
+function renderFinanceSummary(resource, items, container) {
+  let metrics = [];
+  if (resource === 'presupuestos-venta') {
+    metrics = [
+      { label: 'Total cotizado', value: formatFinanceAmount(sumFinanceAmount(items, 'total')) },
+      { label: 'Pendientes de aprobación', value: items.filter(item => item.estado === 'BORRADOR').length },
+      { label: 'Aprobados', value: items.filter(item => item.estado === 'APROBADO').length },
+      { label: 'Rechazados', value: items.filter(item => item.estado === 'RECHAZADO').length }
+    ];
+  } else if (resource === 'detalles-presupuesto') {
+    metrics = [
+      { label: 'Artículos cotizados', value: items.length },
+      { label: 'Unidades cotizadas', value: items.reduce((sum, item) => sum + Number(item.cantidad || 0), 0) },
+      { label: 'Total en líneas', value: formatFinanceAmount(sumFinanceAmount(items, 'subtotal')) }
+    ];
+  } else if (resource === 'documentos-venta') {
+    const vigentes = items.filter(item => !item.anulado);
+    metrics = [
+      { label: 'Total vigente', value: formatFinanceAmount(sumFinanceAmount(vigentes, 'total')) },
+      { label: 'Saldo pendiente', value: formatFinanceAmount(sumFinanceAmount(vigentes, 'saldo')) },
+      {
+        label: 'Pagos parciales',
+        value: vigentes.filter(item =>
+          Number(item.pagos_count || 0) > 0 && Number(item.saldo || 0) > 0
+        ).length
+      },
+      {
+        label: 'Saldados',
+        value: vigentes.filter(item => Number(item.saldo || 0) <= 0).length
+      }
+    ];
+  } else if (resource === 'notas-credito') {
+    metrics = [
+      { label: 'Notas registradas', value: items.length },
+      { label: 'Total acreditado', value: formatFinanceAmount(sumFinanceAmount(items, 'monto')) }
+    ];
+  }
+  if (!metrics.length) return;
+
+  const grid = node('section', undefined, 'finance-summary-grid');
+  grid.setAttribute('aria-label', 'Resumen financiero');
+  metrics.forEach(metric => {
+    const card = node('article', undefined, 'card finance-summary-card');
+    card.append(
+      node('span', metric.label, 'finance-summary-label'),
+      node('strong', String(metric.value), 'finance-summary-value')
+    );
+    grid.append(card);
+  });
+  container.append(grid);
+}
+
+function financeStatusBadge(status) {
+  const styles = {
+    BORRADOR: ['Borrador', 'bg-warning text-dark'],
+    APROBADO: ['Aprobado', 'bg-success'],
+    RECHAZADO: ['Rechazado', 'bg-danger']
+  };
+  const [label, style] = styles[status] || [status || 'Sin estado', 'bg-secondary'];
+  return node('span', label, `badge finance-status ${style}`);
+}
+
 function notice(message, bad = false) {
   const n = node('div', message, `alert alert-${bad ? 'danger' : 'success'}`);
   $('notice').replaceChildren(n);
@@ -111,7 +188,9 @@ async function handlePresupuestoDecision(item, accion) {
   try {
     await api(`presupuestos-venta/${item.id}/decision/`, { accion, motivo });
     await load('presupuestos-venta');
-    notice(accion === 'aprobar' ? 'Presupuesto aprobado.' : 'Presupuesto rechazado.');
+    notice(accion === 'aprobar'
+      ? `El presupuesto ${item.numero} fue aprobado correctamente.`
+      : `El presupuesto ${item.numero} fue rechazado.`);
   } catch (e) {
     notice(e.message, true);
   }
@@ -201,9 +280,14 @@ async function openDocumentoPagos(documento) {
         if (!form.reportValidity() || submit.disabled) return;
         submit.disabled = true;
         try {
-          await api(`documentos-venta/${documento.id}/pagos/`, Object.fromEntries(new FormData(form)));
+          const result = await api(
+            `documentos-venta/${documento.id}/pagos/`,
+            Object.fromEntries(new FormData(form))
+          );
           await load('documentos-venta');
-          notice('Pago registrado.');
+          notice(Number(result.saldo) > 0
+            ? `Pago parcial registrado. Saldo pendiente: ${formatFinanceAmount(result.saldo)}.`
+            : 'Documento saldado. Gracias por registrar el pago.');
           if (current === 'documentos-venta') await openDocumentoPagos(documento);
         } catch (e) {
           notice(e.message, true);
@@ -251,6 +335,7 @@ async function load(resource) {
   }
 
   const items = metadata.items || [];
+  renderFinanceSummary(resource, items, container);
   const userRole = ((user && user.rol) || '').toLowerCase();
   const isBodegaOrGerencia = !!(user && (user.is_superuser || userRole.includes('bodega') || userRole.includes('gerencia')));
 
@@ -382,7 +467,7 @@ async function load(resource) {
       vencimiento: 'Vencimiento',
       total: 'Total',
       saldo: 'Saldo',
-      anulado: 'Anulado'
+      anulado: 'Estado'
     };
   } else if (resource === 'notas-credito') {
     keys = ['numero_documento', 'documento_numero', 'fecha', 'motivo', 'monto'];
@@ -503,6 +588,22 @@ async function load(resource) {
       if (k === 'activo') {
         const badge = node('span', item.activo ? 'Activo' : 'Inactivo', `badge ${item.activo ? 'bg-success' : 'bg-secondary'}`);
         td.append(badge);
+      } else if (resource === 'presupuestos-venta' && k === 'estado') {
+        td.append(financeStatusBadge(item.estado));
+      } else if (resource === 'documentos-venta' && k === 'anulado') {
+        const estado = item.anulado
+          ? ['Anulado', 'bg-danger']
+          : Number(item.saldo || 0) <= 0
+          ? ['Saldado', 'bg-success']
+          : Number(item.pagos_count || 0) > 0
+          ? ['Pago parcial', 'bg-warning text-dark']
+          : ['Pendiente', 'bg-secondary'];
+        td.append(node('span', estado[0], `badge finance-status ${estado[1]}`));
+      } else if (resource === 'documentos-venta' && k === 'saldo') {
+        td.append(
+          node('strong', formatFinanceAmount(item.saldo), 'finance-balance'),
+          node('span', Number(item.saldo || 0) > 0 ? 'Pendiente' : 'Sin saldo', 'finance-balance-label')
+        );
       } else if (k === 'fecha_registro') {
         td.textContent = item[k] ? new Date(item[k]).toLocaleString('es-CL') : '—';
       } else if (['fecha', 'fecha_inicio', 'vencimiento', 'fecha_pago'].includes(k)) {

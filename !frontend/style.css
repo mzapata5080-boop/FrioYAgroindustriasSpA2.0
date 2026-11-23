@@ -27,6 +27,7 @@ body { margin:0; background:var(--page-background); color:var(--text); font-fami
 .btn-kardex:hover,.btn-kardex:focus-visible { background:#462760; border-color:#462760; color:#fff; }
 .finance-card { border-color:#ffc107; }
 .finance-card .role-feature { border-color:#ffc107; }
+.finance-card .role-actions { grid-template-columns:repeat(2,minmax(0,1fr)); }
 .supervisor-card { border-color:#0dcaf0; }
 .supervisor-card .role-feature { border-color:#0dcaf0; }
 .records-filter-bar { background:#f8f9fa; border:1px solid #dee2e6; border-radius:6px; padding:12px 16px; }
@@ -65,6 +66,13 @@ body { margin:0; background:var(--page-background); color:var(--text); font-fami
 .invoice-lines-table td { min-width:0; }
 .invoice-summary { max-width:440px; margin:14px 0 0 auto; padding:12px 16px; border:1px solid #cbd9d5; border-radius:6px; background:#edf5f2; }
 .invoice-summary-row { display:flex; justify-content:space-between; gap:18px; padding:4px 0; }
+.finance-summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:12px; margin-bottom:18px; }
+.finance-summary-card { min-height:94px; padding:14px 16px; border-left:4px solid #ffc107; }
+.finance-summary-label { color:#62666c; font-size:.9rem; }
+.finance-summary-value { display:block; margin-top:5px; font-size:1.35rem; line-height:1.25; }
+.finance-status { font-size:.875rem; padding:.45em .7em; }
+.finance-balance { display:block; white-space:nowrap; }
+.finance-balance-label { display:block; margin-top:3px; color:#62666c; font-size:.8rem; }
 button:focus-visible,a:focus-visible,summary:focus-visible { outline:3px solid #0d6efd; outline-offset:3px; }
 @media (min-width:1200px) { .site-container { width:89.1%; } }
 @media (max-width:767px) {
@@ -91,4 +99,8 @@ button:focus-visible,a:focus-visible,summary:focus-visible { outline:3px solid #
  .invoice-field-wide { grid-column:auto; }
  .invoice-entry-header { padding:14px; }
  .invoice-summary { max-width:none; }
+ .finance-card .role-actions { grid-template-columns:minmax(0,1fr); }
+ .finance-summary-grid { grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px; }
+ .finance-summary-card { min-height:82px; padding:12px; }
+ .finance-summary-value { font-size:1.1rem; }
 }

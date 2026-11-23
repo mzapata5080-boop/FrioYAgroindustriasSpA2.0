@@ -671,10 +671,12 @@ function showForm(fields, item = {}) {
   if (receiptDetails) payload.recepcion_detalles = receiptDetails();
 
   try {
-   await api(`${resource}/${editId ? editId + '/' : ''}`, payload);
+   const result = await api(`${resource}/${editId ? editId + '/' : ''}`, payload);
    if (current === resource) {
     await load(resource);
-    notice('Registro guardado.');
+    notice(resource === 'notas-credito'
+     ? `Nota de crédito ${result.item?.numero_documento || ''} creada correctamente.`
+     : 'Registro guardado.');
    }
   } catch (e) {
    notice(e.message, true);
