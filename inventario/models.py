@@ -71,7 +71,6 @@ class MovimientoBodega(models.Model):
     )
     receptor_nombre = models.CharField(max_length=150, blank=True, default='')
     observaciones = models.TextField(max_length=1500, blank=True, default='')
-    # Identificador del envío: reintentar una salida no debe consumir dos veces.
     solicitud_salida = models.UUIDField(null=True, blank=True, unique=True)
 
 
@@ -93,7 +92,6 @@ class RecepcionIngreso(models.Model):
 
 
 class DetalleConsumoFIFO(models.Model):
-    """Trazabilidad permanente de los lotes consumidos por una salida."""
     salida = models.ForeignKey(MovimientoBodega, on_delete=models.PROTECT, related_name='detalles_fifo')
     lote = models.ForeignKey(RecepcionIngreso, on_delete=models.PROTECT, related_name='consumos_fifo')
     orden = models.PositiveIntegerField()
@@ -114,7 +112,6 @@ class DetalleConsumoFIFO(models.Model):
 
 
 class DevolucionFIFO(models.Model):
-    """Crédito de cantidad y costo contra un consumo original, nunca un lote nuevo."""
     solicitud_id = models.UUIDField(primary_key=True)
     consumo = models.ForeignKey(DetalleConsumoFIFO, on_delete=models.PROTECT, related_name='devoluciones')
     movimiento = models.OneToOneField(MovimientoBodega, on_delete=models.PROTECT, related_name='devolucion_fifo')
@@ -125,4 +122,53 @@ class DevolucionFIFO(models.Model):
         constraints = [
             models.CheckConstraint(condition=models.Q(cantidad__gt=0), name='fyag_devolucion_cantidad_positiva'),
             models.CheckConstraint(condition=models.Q(costo_reintegrado__gte=0), name='fyag_devolucion_costo_no_negativo'),
+        ]
+
+
+class OperacionInventario(models.Model):
+    TIPOS = [
+        ('MERMA_BODEGA', 'Merma en Bodega'), ('MERMA_OBRA', 'Merma en Obra'),
+        ('DEV_BODEGA', 'Devolución a Bodega'), ('DEV_PROVEEDOR', 'Devolución a proveedor'),
+        ('USO_INTERNO', 'Uso interno'), ('CAMBIO', 'Cambio de artículo'),
+        ('ANULAR', 'Anulación compensatoria'),
+    ]
+    solicitud_id = models.UUIDField(primary_key=True)
+    tipo = models.CharField(max_length=20, choices=TIPOS)
+    articulo = models.ForeignKey(Repuesto, on_delete=models.PROTECT, related_name='+')
+    articulo_nuevo = models.ForeignKey(Repuesto, on_delete=models.PROTECT,null=True, blank=True, related_name='+')
+    origen = models.ForeignKey(MovimientoBodega, on_delete=models.PROTECT, null=True, blank=True, related_name='operaciones_referidas')
+    lote = models.ForeignKey(RecepcionIngreso, on_delete=models.PROTECT,null=True, blank=True, related_name='operaciones_referidas')
+    obra = models.ForeignKey('obras.Obra', on_delete=models.PROTECT, null=True, blank=True)
+    cantidad = models.DecimalField(max_digits=15, decimal_places=2)
+    cantidad_nueva = models.DecimalField(max_digits=15, decimal_places=2, null=True, blank=True)
+    motivo = models.CharField(max_length=1000)
+    destino = models.CharField(max_length=150, blank=True)
+    responsable = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    fecha = models.DateTimeField(auto_now_add=True)
+    datos_solicitud = models.JSONField(default=dict)
+    anula_a = models.OneToOneField('self', on_delete=models.PROTECT,null=True, blank=True, related_name='anulada_por')
+    movimiento_anulado = models.OneToOneField(MovimientoBodega, on_delete=models.PROTECT,null=True, blank=True, related_name='anulacion_inventario')
+
+    class Meta:
+        constraints = [
+            models.CheckConstraint(condition=models.Q(cantidad__gt=0), name='fyag_op_cantidad_positiva'),
+            models.CheckConstraint(condition=( models.Q(cantidad_nueva__isnull=True) | models.Q(cantidad_nueva__gt=0)), name='fyag_op_nueva_positiva'),
+        ]
+
+
+class MovimientoOperacion(models.Model):
+    operacion = models.ForeignKey(OperacionInventario, on_delete=models.PROTECT, related_name='movimientos')
+    movimiento = models.OneToOneField(MovimientoBodega, on_delete=models.PROTECT, related_name='detalle_operacion')
+    funcion = models.CharField(max_length=25)
+
+
+class MermaConsumoObra(models.Model):
+    operacion = models.ForeignKey(OperacionInventario, on_delete=models.PROTECT, related_name='mermas')
+    consumo = models.ForeignKey(DetalleConsumoFIFO, on_delete=models.PROTECT, related_name='mermas_operacion')
+    cantidad = models.DecimalField(max_digits=15, decimal_places=2)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=['operacion', 'consumo'], name='fyag_op_merma_consumo_unico'),
+            models.CheckConstraint(condition=models.Q(cantidad__gt=0), name='fyag_op_merma_positiva'),
         ]

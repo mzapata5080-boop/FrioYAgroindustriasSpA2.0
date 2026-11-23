@@ -1,4 +1,5 @@
 from django.db import models
+from django.db.models import Q
 from django.contrib.auth.models import AbstractUser
 
 class Trabajador(AbstractUser):
@@ -7,7 +8,7 @@ class Trabajador(AbstractUser):
 
     @property
     def rol(self):
-        if self.groups.filter(name__iexact='Gerencia').exists():
+        if self.groups.filter(Q(name__iexact='Gerencia') | Q(name__iexact='Gerente')).exists():
             return 'gerencia'
         if self.groups.exists():
             return self.groups.first().name.lower()

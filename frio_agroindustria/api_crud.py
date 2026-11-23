@@ -11,6 +11,7 @@ from frio_agroindustria.api_resources import RESOURCES
 from inventario.api import movements
 from inventario.models import Repuesto, RecepcionIngreso
 from finanzas.forms import FacturaCompraDetalleForm
+from finanzas.models import FacturaCompraDetalle
 
 
 def _resource_fields(resource, formclass, instance=None):
@@ -38,7 +39,7 @@ def _resource_options(resource):
     }
 
 
-def _validate_invoice_details(raw_details, required=True):
+def _validate_invoice_details(raw_details, required=True, existing_details=()):
     if not isinstance(raw_details, list):
         return None, {
             'detalles': ['Los detalles deben enviarse como una lista de artículos.']
@@ -52,6 +53,8 @@ def _validate_invoice_details(raw_details, required=True):
 
     details = []
     errors = {}
+    existing_by_id = {str(detail.pk): detail for detail in existing_details}
+    used_existing_ids = set()
     for index, values in enumerate(raw_details):
         if not isinstance(values, dict):
             errors[f'detalles.{index}'] = [
@@ -59,14 +62,23 @@ def _validate_invoice_details(raw_details, required=True):
             ]
             continue
 
-        form = FacturaCompraDetalleForm(data=values)
+        existing = existing_by_id.get(str(values.get('id')))
+        if existing and existing.pk in used_existing_ids:
+            existing = None
+        form = FacturaCompraDetalleForm(data=values, instance=existing)
         if not form.is_valid():
             for field, messages in form.errors.items():
                 errors[f'detalles.{index}.{field}'] = [
                     str(message) for message in messages
                 ]
             continue
-        details.append(form.save(commit=False))
+        if existing:
+            used_existing_ids.add(existing.pk)
+        details.append(FacturaCompraDetalle(
+            articulo=form.cleaned_data['articulo'],
+            cantidad=form.cleaned_data['cantidad'],
+            precio_unitario=form.cleaned_data['precio_unitario'],
+        ))
 
     if errors:
         return None, errors
@@ -203,6 +215,7 @@ def detail(request, resource, pk):
                 invoice_details, detail_errors = _validate_invoice_details(
                     raw_details,
                     required=obj.detalles.exists(),
+                    existing_details=obj.detalles.all(),
                 )
                 if detail_errors:
                     return JsonResponse({'errors': detail_errors}, status=400)

@@ -30,12 +30,28 @@ class ObraForm(forms.ModelForm):
         widgets = {
             'fecha_inicio': forms.DateInput(attrs={'type': 'date'}),
             'fecha_termino_estimada': forms.DateInput(attrs={'type': 'date'}),
+            'presupuesto_estimado': forms.NumberInput(attrs={'step': '1'}),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            amount = Decimal(str(self.instance.presupuesto_estimado))
+            if amount != amount.to_integral_value():
+                self.fields['presupuesto_estimado'].widget.attrs['step'] = '0.01'
 
     def clean_presupuesto_estimado(self):
         monto = self.cleaned_data['presupuesto_estimado']
         if monto < 0:
             raise forms.ValidationError('El presupuesto estimado no puede ser negativo.')
+        if (
+            monto != monto.to_integral_value()
+            and (
+                not self.instance.pk
+                or monto != Decimal(str(self.instance.presupuesto_estimado))
+            )
+        ):
+            raise forms.ValidationError('El presupuesto debe ingresarse en pesos enteros, sin decimales.')
         return monto
 
     def clean(self):
@@ -59,6 +75,45 @@ class PresupuestoForm(forms.ModelForm):
             'monto_otros_estimado',
             'observaciones',
         ]
+        widgets = {
+            'monto_materiales_estimado': forms.NumberInput(attrs={'step': '1'}),
+            'monto_mano_obra_estimado': forms.NumberInput(attrs={'step': '1'}),
+            'monto_otros_estimado': forms.NumberInput(attrs={'step': '1'}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            for name in (
+                'monto_materiales_estimado',
+                'monto_mano_obra_estimado',
+                'monto_otros_estimado',
+            ):
+                amount = getattr(self.instance, name)
+                amount = Decimal(str(amount))
+                if amount != amount.to_integral_value():
+                    self.fields[name].widget.attrs['step'] = '0.01'
+
+    def clean_monto_materiales_estimado(self):
+        return self._clean_whole_amount('monto_materiales_estimado')
+
+    def clean_monto_mano_obra_estimado(self):
+        return self._clean_whole_amount('monto_mano_obra_estimado')
+
+    def clean_monto_otros_estimado(self):
+        return self._clean_whole_amount('monto_otros_estimado')
+
+    def _clean_whole_amount(self, field_name):
+        amount = self.cleaned_data[field_name]
+        if (
+            amount != amount.to_integral_value()
+            and (
+                not self.instance.pk
+                or amount != Decimal(str(getattr(self.instance, field_name)))
+            )
+        ):
+            raise forms.ValidationError('El monto debe ingresarse en pesos enteros, sin decimales.')
+        return amount
 
 
 class SolicitudMaterialForm(forms.ModelForm):

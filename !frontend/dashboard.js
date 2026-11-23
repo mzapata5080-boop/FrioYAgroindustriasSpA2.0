@@ -107,6 +107,10 @@ function renderSession() {
    action('solicitudes', 'Solicitudes de obra', 'btn-outline-info'),
    action('obras', 'Obras activas', 'btn-outline-secondary')
   );
+  const botonOperaciones = node('button', 'Mermas, devoluciones y correcciones', 'btn btn-outline-danger');
+  botonOperaciones.type = 'button';
+  botonOperaciones.onclick = abrirOperaciones;
+  $('warehouse-actions').append(botonOperaciones);
  } else {
   $('warehouse-actions').append(action('articulos', 'Consultar inventario', 'btn-outline-primary'));
  }

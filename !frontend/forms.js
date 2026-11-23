@@ -44,11 +44,22 @@ function scaledAmount(value) {
  return BigInt(whole) * 100n + BigInt(part.padEnd(2, '0'));
 }
 
+function formatCents(cents) {
+ const whole = (cents / 100n).toLocaleString('es-CL');
+ const fraction = cents % 100n;
+ return `$${whole}${fraction ? `,${fraction.toString().padStart(2, '0')}` : ''} CLP`;
+}
+
 function formatSubtotal(quantity, price) {
  const q = scaledAmount(quantity), p = scaledAmount(price);
  if (q === null || p === null) return '—';
  const cents = (q * p + 50n) / 100n;
- return `$${(cents / 100n).toLocaleString('es-CL')},${(cents % 100n).toString().padStart(2, '0')} CLP`;
+ return formatCents(cents);
+}
+
+function allowExistingFraction(input, value) {
+ const amount = scaledAmount(value);
+ if (amount !== null && amount % 100n !== 0n) input.step = '0.01';
 }
 
 function attachReceiptDetails(form, context) {
@@ -155,7 +166,7 @@ function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false,
  const units = { unidad: 'Unidades', m: 'Metros', kg: 'Kilogramos', l: 'Litros' };
  const section = node('section', undefined, 'mb-3');
  const heading = node('h3', 'Artículos de la factura', 'h5');
- const rowsContainer = node('div');
+ const rowsContainer = node('div', undefined, 'table-responsive invoice-lines-wrap');
  rowsContainer.id = 'invoice-details-list';
  const rows = [];
  const addButton = node('button', 'Agregar artículo', 'btn btn-outline-primary btn-sm mt-2');
@@ -167,23 +178,81 @@ function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false,
    'Los artículos de esta factura están bloqueados porque ya hay cantidades recibidas.',
    'text-muted'
   );
-  (initialDetails || []).forEach(detail => {
+  const details = initialDetails || [];
+  if (details.length) {
+   const table = node('table', undefined, 'table table-sm table-bordered align-middle');
+   const head = node('thead'), headerRow = node('tr');
+   ['Artículo', 'Cantidad facturada', 'Precio unitario'].forEach(title => {
+    headerRow.append(node('th', title));
+   });
+   head.append(headerRow);
+   const body = node('tbody');
+   details.forEach(detail => {
+    const row = node('tr');
+    const price = scaledAmount(detail.precio_unitario);
+    [detail.articulo_nombre, detail.cantidad, price === null
+      ? detail.precio_unitario
+      : formatCents(price)].forEach(value => {
+     row.append(node('td', String(value ?? '—')));
+    });
+    body.append(row);
+   });
+   table.append(head, body);
+   rowsContainer.append(table);
+  } else {
    rowsContainer.append(node(
     'p',
-    `${detail.articulo_nombre}: ${detail.cantidad} × ${detail.precio_unitario}`,
-    'mb-1'
+    'No se encontraron líneas de artículos para mostrar en esta factura.',
+    'text-muted'
    ));
-  });
+  }
   section.append(heading, notice, rowsContainer);
   form.append(section);
   return null;
  }
 
+ const table = node('table', undefined, 'table table-bordered align-middle invoice-lines-table');
+ const head = node('thead'), headerRow = node('tr');
+ ['Artículo', 'Cantidad', 'Precio unitario', 'Subtotal', ''].forEach(title => {
+  headerRow.append(node('th', title));
+ });
+ head.append(headerRow);
+ const body = node('tbody');
+ table.append(head, body);
+ rowsContainer.append(table);
+
+ const amount = form.elements.namedItem('monto');
+ const subtotalValue = node('strong', '$0,00 CLP');
+ const amountValue = node('strong', '—');
+ const summary = node('div', undefined, 'invoice-summary');
+ const subtotalRow = node('div', undefined, 'invoice-summary-row');
+ subtotalRow.append(node('span', 'Subtotal de artículos'), subtotalValue);
+ const amountRow = node('div', undefined, 'invoice-summary-row');
+ amountRow.append(node('span', 'Monto indicado en factura'), amountValue);
+ summary.append(subtotalRow, amountRow);
+
+ function updateSummary() {
+  let total = 0n;
+  rows.forEach(entry => {
+   const quantity = scaledAmount(entry.quantity.value);
+   const price = scaledAmount(entry.price.value);
+   if (entry.row.hidden || quantity === null || price === null) {
+    entry.lineSubtotal.textContent = '—';
+    return;
+   }
+   const lineTotal = (quantity * price + 50n) / 100n;
+   total += lineTotal;
+   entry.lineSubtotal.textContent = formatSubtotal(entry.quantity.value, entry.price.value);
+  });
+  subtotalValue.textContent = formatCents(total);
+  amountValue.textContent = amount && amount.value ? formatSubtotal('1', amount.value) : '—';
+ }
+
  function addRow(detail = {}) {
   const index = rows.length + 1;
-  const row = node('div', undefined, 'row g-2 align-items-end border rounded p-2 mb-2');
-  const articleWrap = node('div', undefined, 'col-md-5');
-  const articleLabel = node('label', 'Artículo', 'form-label');
+  const row = node('tr');
+  const articleCell = node('td');
+  const articleLabel = node('label', 'Artículo', 'visually-hidden');
   const articleSelect = node('select');
   articleSelect.className = 'form-select';
   articleSelect.required = true;
@@ -198,10 +267,10 @@ function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false,
   articleSelect.value = String(detail.articulo ?? detail.articulo_id ?? '');
   articleLabel.htmlFor = `invoice-detail-article-${index}`;
   articleSelect.id = articleLabel.htmlFor;
-  articleWrap.append(articleLabel, articleSelect);
+  articleCell.append(articleLabel, articleSelect);
 
-  const quantityWrap = node('div', undefined, 'col-md-2');
-  const quantityLabel = node('label', 'Cantidad', 'form-label');
+  const quantityCell = node('td');
+  const quantityLabel = node('label', 'Cantidad', 'visually-hidden');
   const quantity = node('input');
   quantity.type = 'number';
   quantity.className = 'form-control';
@@ -211,26 +280,28 @@ function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false,
   quantity.value = detail.cantidad ?? '';
   quantityLabel.htmlFor = `invoice-detail-quantity-${index}`;
   quantity.id = quantityLabel.htmlFor;
-  quantityWrap.append(quantityLabel, quantity);
+  quantityCell.append(quantityLabel, quantity);
 
-  const priceWrap = node('div', undefined, 'col-md-3');
-  const priceLabel = node('label', 'Precio unitario', 'form-label');
+  const priceCell = node('td');
+  const priceLabel = node('label', 'Precio unitario', 'visually-hidden');
   const price = node('input');
   price.type = 'number';
   price.className = 'form-control';
   price.min = '0';
-  price.step = '0.01';
+  price.step = '1';
   price.required = true;
   price.value = detail.precio_unitario ?? '';
+  allowExistingFraction(price, detail.precio_unitario);
   priceLabel.htmlFor = `invoice-detail-price-${index}`;
   price.id = priceLabel.htmlFor;
-  priceWrap.append(priceLabel, price);
+  priceCell.append(priceLabel, price);
 
-  const actionWrap = node('div', undefined, 'col-md-2');
+  const lineSubtotal = node('td', '—', 'text-end text-nowrap');
+  const actionCell = node('td');
   const removeButton = node('button', 'Quitar', 'btn btn-outline-danger w-100');
   removeButton.type = 'button';
-  removeButton.onclick = () => { row.hidden = true; };
-  actionWrap.append(removeButton);
+  removeButton.onclick = () => { row.hidden = true; updateSummary(); };
+  actionCell.append(removeButton);
 
   function updateQuantityStep() {
    const article = articleById.get(articleSelect.value);
@@ -240,22 +311,28 @@ function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false,
    quantityLabel.textContent = unit ? `Cantidad (${unit})` : 'Cantidad';
   }
   articleSelect.addEventListener('change', updateQuantityStep);
+  quantity.addEventListener('input', updateSummary);
+  price.addEventListener('input', updateSummary);
   updateQuantityStep();
 
-  row.append(articleWrap, quantityWrap, priceWrap, actionWrap);
-  rowsContainer.append(row);
-  rows.push({ row, articleSelect, quantity, price });
+  row.append(articleCell, quantityCell, priceCell, lineSubtotal, actionCell);
+  body.append(row);
+  rows.push({ id: detail.id, row, articleSelect, quantity, price, lineSubtotal });
+  updateSummary();
  }
 
  if (initialDetails && initialDetails.length) initialDetails.forEach(addRow);
  else if (!allowEmpty) addRow();
  addButton.onclick = () => addRow();
- section.append(heading, rowsContainer, addButton);
+ if (amount) amount.addEventListener('input', updateSummary);
+ updateSummary();
+ section.append(heading, rowsContainer, addButton, summary);
  form.append(section);
 
  return () => rows
   .filter(entry => !entry.row.hidden)
   .map(entry => ({
+   ...(entry.id ? { id: entry.id } : {}),
    articulo: entry.articleSelect.value,
    cantidad: entry.quantity.value,
    precio_unitario: entry.price.value
@@ -268,6 +345,13 @@ function attachOutputDetails(form, context) {
  const article = form.elements.namedItem('articulo');
  const qty = form.elements.namedItem('cantidad');
  const solMat = form.elements.namedItem('solicitud_material');
+ const work = form.elements.namedItem('obra');
+ const client = form.elements.namedItem('cliente');
+ const workOrder = form.elements.namedItem('numero_ot');
+ const works = new Map((context.works || []).map(item => [String(item.id), item]));
+ const materialRequests = new Map((context.materialRequests || [])
+  .map(item => [String(item.id), item]));
+ const materialRequest = form.elements.namedItem('solicitud_material');
  if (!article || !qty) return;
 
  const box = node('div', undefined, 'mb-3');
@@ -322,6 +406,34 @@ function attachOutputDetails(form, context) {
  article.addEventListener('change', update);
  qty.addEventListener('input', update);
  if (solMat) solMat.addEventListener('change', update);
+
+ if (work) {
+  work.addEventListener('change', () => {
+   const selectedWork = works.get(work.value);
+   if (!selectedWork) return;
+   if (client) {
+    client.value = String(selectedWork.cliente_id);
+    client.dispatchEvent(new Event('change'));
+   }
+   if (workOrder) workOrder.value = selectedWork.codigo_ot;
+  });
+ }
+
+ if (materialRequest) {
+  materialRequest.addEventListener('change', () => {
+   const selectedRequest = materialRequests.get(materialRequest.value);
+   if (!selectedRequest) return;
+   if (work) {
+    work.value = String(selectedRequest.obra_id);
+    work.dispatchEvent(new Event('change'));
+   }
+   article.value = String(selectedRequest.articulo_id);
+   article.dispatchEvent(new Event('change'));
+   qty.value = selectedRequest.cantidad_pendiente;
+   qty.dispatchEvent(new Event('input'));
+  });
+ }
+
  update();
 }
 
@@ -371,6 +483,7 @@ function showForm(fields, item = {}) {
  const titles = {
   articulos: editId ? 'Editar artículo' : 'Crear artículo',
   categorias: editId ? 'Editar categoría' : 'Nueva categoría',
+  facturas: editId ? 'Editar factura de compra' : 'Registrar factura de compra',
   ingresos: 'Registrar ingreso',
   salidas: 'Registrar salida de bodega',
   obras: editId ? 'Editar obra' : 'Nueva obra / proyecto',
@@ -381,6 +494,13 @@ function showForm(fields, item = {}) {
 
  const form = $('edit-form');
  form.replaceChildren();
+ let invoiceFieldsGrid = null;
+ if (resource === 'facturas') {
+  const invoiceHeader = node('section', undefined, 'invoice-entry-header mb-4');
+  invoiceFieldsGrid = node('div', undefined, 'invoice-fields-grid');
+  invoiceHeader.append(node('h3', 'Datos del documento', 'h5'), invoiceFieldsGrid);
+  form.append(invoiceHeader);
+ }
 
  for (const field of fields) {
   const wrap = node('div', undefined, 'mb-3'), id = `field-${field.name}`;
@@ -419,6 +539,9 @@ function showForm(fields, item = {}) {
    [...input.options].forEach(opt => { opt.selected = selected.has(opt.value); });
   } else {
    input.value = item[field.name] ?? (field.name === 'solicitud_id' ? requestId() : (field.initial ?? ''));
+   if (field.type === 'number' && field.step === '1') {
+    allowExistingFraction(input, item[field.name]);
+   }
   }
 
   if (field.type === 'hidden') {
@@ -428,15 +551,69 @@ function showForm(fields, item = {}) {
    label.htmlFor = id;
    wrap.append(label);
   }
+  if (resource === 'facturas' && field.name === 'observaciones') {
+   wrap.className += ' invoice-field-wide';
+  }
 
   let hint;
   if (['ingresos', 'salidas', 'solicitudes'].includes(resource) && ['factura', 'articulo', 'obra'].includes(field.name) && !input.multiple) {
    hint = searchableSelect(input, field.label, wrap);
   }
 
-  wrap.append(input);
+  if (resource === 'obras' && field.name === 'tecnicos' && input.multiple) {
+   input.hidden = true;
+   const picker = node('div', undefined, 'technician-picker');
+   const toggle = node('button', 'Seleccionar técnicos', 'btn btn-outline-secondary w-100 text-start');
+   toggle.type = 'button';
+   toggle.setAttribute('aria-expanded', 'false');
+   toggle.setAttribute('aria-controls', `${id}-choices`);
+   const menu = node('div', undefined, 'technician-picker-menu');
+   menu.id = `${id}-choices`;
+   menu.hidden = true;
+   menu.setAttribute('role', 'group');
+   menu.setAttribute('aria-label', 'Técnicos disponibles');
+   const selectedTitle = node('p', 'Técnicos seleccionados:', 'form-text mb-1 mt-2');
+   const selectedList = node('ol', undefined, 'technician-selected-list mb-1');
+   const emptySelection = node('p', 'Ningún técnico seleccionado.', 'form-text mb-0');
+
+   [...input.options].forEach(option => {
+    if (!option.value) return;
+    const optionLabel = node('label', undefined, 'technician-picker-option');
+    const checkbox = node('input');
+    checkbox.type = 'checkbox';
+    checkbox.className = 'form-check-input';
+    checkbox.value = option.value;
+    checkbox.checked = option.selected;
+    checkbox.onchange = () => {
+     option.selected = checkbox.checked;
+     updateSelected();
+    };
+    optionLabel.append(checkbox, node('span', option.textContent));
+    menu.append(optionLabel);
+   });
+
+   function updateSelected() {
+    const selected = [...input.options].filter(option => option.selected);
+    selectedList.replaceChildren(...selected.map(option => node('li', option.textContent)));
+    emptySelection.hidden = selected.length > 0;
+    toggle.textContent = selected.length
+     ? `Seleccionar técnicos (${selected.length} seleccionados)`
+     : 'Seleccionar técnicos';
+   }
+
+   toggle.onclick = () => {
+    menu.hidden = !menu.hidden;
+    toggle.setAttribute('aria-expanded', String(!menu.hidden));
+   };
+   updateSelected();
+   picker.append(toggle, menu);
+   wrap.append(picker, selectedTitle, selectedList, emptySelection, input);
+  } else {
+   wrap.append(input);
+  }
   if (hint) wrap.append(hint);
-  form.append(wrap);
+  if (invoiceFieldsGrid) invoiceFieldsGrid.append(wrap);
+  else form.append(wrap);
  }
 
  const invoiceDetails = resource === 'facturas'

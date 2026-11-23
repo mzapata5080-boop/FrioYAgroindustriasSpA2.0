@@ -29,18 +29,21 @@ function notice(message, bad = false) {
 }
 
 async function api(path, payload) {
+  const multipart = payload instanceof FormData;
   const response = await fetch(`${window.API_BASE}/${path}`, {
     method: payload === undefined ? 'GET' : 'POST',
     credentials: 'include',
-    headers: payload === undefined ? {} : { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-    body: payload === undefined ? undefined : JSON.stringify(payload)
+    headers: payload === undefined ? {} : multipart
+      ? { 'X-CSRFToken': csrf }
+      : { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+    body: payload === undefined ? undefined : multipart ? payload : JSON.stringify(payload)
   });
   const body = await response.json().catch(() => ({
-    error: `Respuesta inesperada (${response.status}). Comprueba el backend y la configuración CSRF.`
-  }));
+    error: `Respuesta inesperada (${response.status}). Comprueba el backend y la configuración CSRF.` }));
   if (!response.ok) {
     if (response.status === 401) { user = null; renderSession(); }
-    throw new Error(body.error || Object.entries(body.errors || {}).map(([k, v]) => `${k}: ${v.join(' ')}`).join('\n') || 'No se pudo completar la operación.');
+    throw new Error(body.error || Object.entries(body.errors || {})
+      .map(([k, v]) => `${k}: ${v.join(' ')}`).join('\n') || 'No se pudo completar la operación.');
   }
   return body;
 }
@@ -128,8 +131,50 @@ async function load(resource) {
   // Configuración de columnas por recurso
   let keys = [];
   let labels = {};
+  let kardexMovementLabels = {};
 
-  if (resource === 'articulos') {
+  if (resource === 'kardex') {
+    keys = [
+      'id', 'fecha_registro', 'clase_movimiento', 'articulo', 'cantidad',
+      'unidad_medida', 'variacion_stock_bodega', 'costo_total_fifo',
+      'obra_codigo', 'cliente_nombre', 'receptor', 'responsable', 'destino',
+      'motivo_operacion', 'referencia_movimiento', 'referencia_operacion',
+      'referencia_lote', 'observaciones'
+    ];
+    labels = {
+      id: 'N° movimiento',
+      fecha_registro: 'Fecha y hora',
+      clase_movimiento: 'Tipo de movimiento',
+      articulo: 'Artículo',
+      cantidad: 'Cantidad',
+      unidad_medida: 'Unidad',
+      variacion_stock_bodega: 'Variación de stock',
+      costo_total_fifo: 'Costo FIFO',
+      obra_codigo: 'Código de obra',
+      cliente_nombre: 'Cliente',
+      receptor: 'Recibido por',
+      responsable: 'Responsable',
+      destino: 'Destino',
+      motivo_operacion: 'Motivo',
+      referencia_movimiento: 'Movimiento de origen',
+      referencia_operacion: 'Operación anulada',
+      referencia_lote: 'Lote original',
+      observaciones: 'Observaciones'
+    };
+    kardexMovementLabels = {
+      INGRESO: 'Ingreso',
+      SALIDA: 'Egreso',
+      AJUSTE: 'Ajuste',
+      DEVOLUCION: 'Devolución',
+      MERMA_BODEGA: 'Merma en bodega',
+      MERMA_OBRA: 'Merma en obra',
+      DEV_BODEGA: 'Devolución a bodega',
+      DEV_PROVEEDOR: 'Devolución a proveedor',
+      USO_INTERNO: 'Uso interno',
+      CAMBIO: 'Ajuste por cambio de artículo',
+      ANULAR: 'Ajuste compensatorio (anulación)'
+    };
+  } else if (resource === 'articulos') {
     keys = ['codigo_parte', 'descripcion', 'categoria_nombre', 'ubicacion_bodega', 'unidad_medida_display', 'stock_actual', 'stock_reservado', 'stock_minimo', 'activo'];
     labels = {
       codigo_parte: 'Código interno',
@@ -208,6 +253,14 @@ async function load(resource) {
     keys = Object.keys(items[0]).filter(k => !hiddenColumns.has(k));
     labels = {
       ...Object.fromEntries((metadata.fields || []).map(f => [f.name, f.label])),
+      clase_movimiento: 'Clase de movimiento',
+      operacion_id: 'ID operación',
+      motivo_operacion: 'Motivo',
+      destino: 'Destino',
+      referencia_movimiento: 'Movimiento de referencia',
+      referencia_operacion: 'Operación anulada',
+      referencia_lote: 'Lote original',
+      variacion_stock_bodega: 'Cambio en stock de Bodega',
       responsable_id: 'ID trabajador',
       responsable: 'Trabajador',
       unidad_medida: 'Unidad',
@@ -288,10 +341,18 @@ async function load(resource) {
         td.textContent = item[k] ? new Date(item[k]).toLocaleString('es-CL') : '—';
       } else if (k === 'fecha' || k === 'fecha_inicio') {
         td.textContent = item[k] || '—';
-      } else if (['costo_total_fifo', 'presupuesto_estimado', 'monto_materiales_estimado', 'monto_mano_obra_estimado', 'total_estimado'].includes(k)) {
+      } else if (['monto', 'costo_total_fifo', 'presupuesto_estimado', 'monto_materiales_estimado', 'monto_mano_obra_estimado', 'total_estimado'].includes(k)) {
         td.textContent = (item[k] !== null && item[k] !== undefined)
-          ? `$${Number(item[k]).toLocaleString('es-CL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} CLP`
+          ? `$${Number(item[k]).toLocaleString('es-CL', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} CLP`
           : '—';
+      } else if (resource === 'kardex' && k === 'clase_movimiento') {
+        const movementType = item[k] || item.tipo;
+        td.textContent = kardexMovementLabels[movementType] || movementType || '—';
+      } else if (resource === 'kardex' && k === 'variacion_stock_bodega') {
+        const variation = Number(item[k]);
+        td.textContent = item[k] === null || item[k] === undefined || !Number.isFinite(variation)
+          ? '—'
+          : `${variation > 0 ? '+' : ''}${variation}`;
       } else if (resource === 'articulos' && k === 'stock_actual') {
         const stockActual = Number(item.stock_actual || 0);
         const stockMinimo = Number(item.stock_minimo || 0);

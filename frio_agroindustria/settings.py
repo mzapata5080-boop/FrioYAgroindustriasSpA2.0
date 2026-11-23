@@ -166,7 +166,3 @@ AUTH_USER_MODEL = 'usuarios.Trabajador'
 LOGIN_REDIRECT_URL = 'dashboard'
 LOGOUT_REDIRECT_URL = 'login'
 
-# Solo SQLite local: sincroniza Inventario sin inventar el historial de Supabase.
-# El archivo original inventario.0001_initial aún debe recuperarse del equipo.
-if DATABASE_MODE == 'sqlite':
-    MIGRATION_MODULES = {'inventario': None}

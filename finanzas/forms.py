@@ -188,7 +188,8 @@ class FacturaCompraForm(forms.ModelForm):
 
             'monto': forms.NumberInput(
                 attrs={
-                    'class': 'form-control'
+                    'class': 'form-control',
+                    'step': '1'
                 }
             ),
 
@@ -200,11 +201,25 @@ class FacturaCompraForm(forms.ModelForm):
             ),
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            amount = Decimal(str(self.instance.monto))
+            if amount != amount.to_integral_value():
+                self.fields['monto'].widget.attrs['step'] = '0.01'
+
     def clean_monto(self):
         monto = self.cleaned_data['monto']
         if monto <= 0:
             raise forms.ValidationError(
                 "El monto de la factura debe ser mayor que cero."
+            )
+        if (
+            monto != monto.to_integral_value()
+            and (not self.instance.pk or monto != Decimal(str(self.instance.monto)))
+        ):
+            raise forms.ValidationError(
+                "El monto debe ingresarse en pesos enteros, sin decimales."
             )
         return monto
 
@@ -220,9 +235,16 @@ class FacturaCompraDetalleForm(forms.ModelForm):
                 attrs={'class': 'form-control', 'min': '0.01', 'step': '0.01'}
             ),
             'precio_unitario': forms.NumberInput(
-                attrs={'class': 'form-control', 'min': '0', 'step': '0.01'}
+                attrs={'class': 'form-control', 'min': '0', 'step': '1'}
             ),
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            price = Decimal(str(self.instance.precio_unitario))
+            if price != price.to_integral_value():
+                self.fields['precio_unitario'].widget.attrs['step'] = '0.01'
 
     def clean_cantidad(self):
         cantidad = self.cleaned_data['cantidad']
@@ -247,6 +269,16 @@ class FacturaCompraDetalleForm(forms.ModelForm):
         if precio < 0:
             raise forms.ValidationError(
                 "El precio unitario no puede ser negativo."
+            )
+        if (
+            precio != precio.to_integral_value()
+            and (
+                not self.instance.pk
+                or precio != Decimal(str(self.instance.precio_unitario))
+            )
+        ):
+            raise forms.ValidationError(
+                "El precio unitario debe ingresarse en pesos enteros, sin decimales."
             )
         return precio
 

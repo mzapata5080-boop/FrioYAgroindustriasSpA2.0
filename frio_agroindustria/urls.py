@@ -1,6 +1,7 @@
 from django.contrib import admin
 from django.urls import path
 from . import api
+from inventario import operaciones_api
 from obras import api as obras_api
 
 urlpatterns = [
@@ -15,6 +16,9 @@ urlpatterns = [
     path('api/presupuestos/', obras_api.presupuestos_collection),
     path('api/solicitudes/', obras_api.solicitudes_collection),
     path('api/solicitudes/<int:pk>/', obras_api.solicitud_detail),
+    path('api/operaciones/', operaciones_api.operaciones),
+    path('api/operaciones/<uuid:operacion_id>/archivos/', operaciones_api.documentos),
+    path('api/operaciones/<uuid:operacion_id>/archivos/<int:archivo_id>/', operaciones_api.descargar_documento),
     path('api/<str:resource>/', api.collection),
     path('api/<str:resource>/<int:pk>/', api.detail),
 ]

@@ -24,13 +24,7 @@ def _repetida(registro, consumo_id, cantidad, responsable_id):
     return ResultadoDevolucionFIFO(registro, True)
 
 
-def registrar_devolucion_fifo(*, consumo_id, cantidad, responsable_id, solicitud_id):
-    """Devuelve una cantidad de un detalle original a su lote y acredita su costo.
-
-    Una devolución de varios lotes se invoca por cada detalle, con claves propias,
-    dentro de una transacción del llamador si requiere atomicidad del conjunto.
-    No acepta precio ni un lote elegido por el cliente. Requiere permisos previos.
-    """
+def registrar_devolucion_fifo(*, consumo_id, cantidad, responsable_id, solicitud_id, compensacion=False):
     if type(consumo_id) is not int or consumo_id <= 0 or type(responsable_id) is not int or responsable_id <= 0:
         raise ValidationError('Indica identificadores válidos de consumo y responsable.')
     if (not isinstance(cantidad, Decimal) or not cantidad.is_finite() or cantidad <= 0
@@ -53,13 +47,17 @@ def registrar_devolucion_fifo(*, consumo_id, cantidad, responsable_id, solicitud
                 raise ValidationError('El detalle no corresponde a una salida y un lote del mismo artículo.')
             if articulo.unidad_medida == 'unidad' and cantidad != cantidad.to_integral_value():
                 raise ValidationError('La cantidad debe ser entera para artículos por unidad.')
-            devuelto = consumo.devoluciones.aggregate(cantidad=Sum('cantidad'), costo=Sum('costo_reintegrado'))
+            from inventario.operaciones import devueltos_vigentes, cantidad_mermada, salida_de_obra
+            if not compensacion:
+                salida_de_obra(consumo.salida)
+            devuelto = devueltos_vigentes(consumo).aggregate(
+                cantidad=Sum('cantidad'), costo=Sum('costo_reintegrado'))
             acumulado = devuelto['cantidad'] or Decimal('0')
             costo_previo = (costo_repartido(consumo.cantidad, consumo.costo_asignado, Decimal('0'), acumulado)
                 if acumulado else Decimal('0.00'))
             if (devuelto['costo'] or Decimal('0')) != costo_previo:
                 raise ValidationError('El historial de costos devueltos de este consumo es inconsistente.')
-            if cantidad > consumo.cantidad - acumulado:
+            if cantidad > consumo.cantidad - acumulado - cantidad_mermada(consumo):
                 raise ValidationError('La devolución supera la cantidad pendiente de este consumo.')
             if (lote.cantidad_disponible + cantidad > lote.movimiento.cantidad
                     or articulo.stock_actual + cantidad > Decimal('9999999999999.99')):
@@ -67,7 +65,8 @@ def registrar_devolucion_fifo(*, consumo_id, cantidad, responsable_id, solicitud
             costo = costo_repartido(consumo.cantidad, consumo.costo_asignado, acumulado, cantidad)
             movimiento = MovimientoBodega.objects.create(tipo='DEVOLUCION', cantidad=cantidad,
                 repuesto=articulo, numero_ot=consumo.salida.numero_ot,
-                responsable_id=responsable_id, costo_total_fifo=costo)
+                responsable_id=responsable_id, costo_total_fifo=costo,
+                obra_id=consumo.salida.obra_id, cliente_id=consumo.salida.cliente_id)
             registro = DevolucionFIFO.objects.create(solicitud_id=solicitud_id, consumo=consumo,
                 movimiento=movimiento, cantidad=cantidad, costo_reintegrado=costo)
             lote.cantidad_disponible += cantidad

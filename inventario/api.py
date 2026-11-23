@@ -17,6 +17,7 @@ from finanzas.models import (
     RecepcionCompra,
     RecepcionDetalle,
 )
+from obras.models import Obra, SolicitudMaterial
 
 
 def serialize(movement):
@@ -255,6 +256,23 @@ def movements(request, resource):
                     'id', 'codigo_parte', 'descripcion', 'unidad_medida', 'stock_actual', 'stock_reservado'
                 )
             )
+        if resource == 'salidas':
+            result['works'] = list(
+                Obra.objects.exclude(estado='CERRADA').values('id', 'cliente_id', 'codigo_ot')
+            )
+            result['materialRequests'] = [
+                {
+                    'id': solicitud.pk,
+                    'obra_id': solicitud.obra_id,
+                    'articulo_id': solicitud.articulo_id,
+                    'cantidad_pendiente': str(solicitud.cantidad_pendiente),
+                }
+                for solicitud in SolicitudMaterial.objects.filter(
+                    estado__in=('APROBADA', 'PARCIAL')
+                ).only(
+                    'id', 'obra_id', 'articulo_id', 'cantidad_reservada', 'cantidad_entregada'
+                )
+            ]
         if resource == 'ingresos':
             invoice_details = pending_invoice_details()
             pending_invoice_ids = {str(detail['factura_id']) for detail in invoice_details}
@@ -272,6 +290,10 @@ def movements(request, resource):
                 'required': True,
             })
             result['invoiceDetails'] = invoice_details
+        if resource == 'kardex':
+            from inventario.operaciones_api import enriquecer_kardex
+            enriquecer_kardex(result['items'])
+
         return JsonResponse(result)
 
     if resource == 'salidas':

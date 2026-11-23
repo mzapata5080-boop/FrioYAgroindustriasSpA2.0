@@ -1,3 +1,4 @@
+from decimal import Decimal
 from django.test import TestCase
 from frio_agroindustria.api_common import schema, serialize
 from frio_agroindustria.api_resources import RESOURCES
@@ -9,7 +10,7 @@ from .forms import (
     FacturaCompraForm,
     FacturaCompraDetalleForm
 )
-from .models import Cliente, Proveedor
+from .models import Cliente, Proveedor, FacturaCompra, FacturaCompraDetalle
 
 
 class ContactFieldsTests(TestCase):
@@ -114,6 +115,15 @@ class FacturaCompraDetailsTests(TestCase):
         })
         self.assertTrue(form.is_valid(), form.errors)
 
+    def test_fractional_unit_price_is_rejected(self):
+        form = FacturaCompraDetalleForm(data={
+            'articulo': self.kg_article.pk,
+            'cantidad': '1.25',
+            'precio_unitario': '100.50'
+        })
+        self.assertFalse(form.is_valid())
+        self.assertIn('precio_unitario', form.errors)
+
     def test_invoice_amount_must_be_positive(self):
         form = FacturaCompraForm(data={
             'proveedor': self.proveedor.pk,
@@ -125,6 +135,79 @@ class FacturaCompraDetailsTests(TestCase):
         })
         self.assertFalse(form.is_valid())
         self.assertIn('monto', form.errors)
+
+    def test_fractional_invoice_amount_is_rejected_and_schema_uses_integer_step(self):
+        form = FacturaCompraForm(data={
+            'proveedor': self.proveedor.pk,
+            'fecha': '2026-11-20',
+            'numero_documento': 'F-002',
+            'tipo_documento': 'Factura',
+            'monto': '1000.50',
+            'observaciones': ''
+        })
+        self.assertFalse(form.is_valid())
+        self.assertIn('monto', form.errors)
+
+        schema_fields = {
+            field['name']: field
+            for field in schema(RESOURCES['facturas'][1]())
+        }
+        self.assertEqual(schema_fields['monto']['step'], '1')
+        self.assertEqual(
+            FacturaCompraDetalleForm().fields['precio_unitario'].widget.attrs['step'],
+            '1'
+        )
+
+    def test_existing_fractional_invoice_amount_can_be_kept_unchanged(self):
+        invoice = FacturaCompra.objects.create(
+            proveedor=self.proveedor,
+            fecha='2026-11-20',
+            numero_documento='F-003',
+            tipo_documento='Factura',
+            monto='1000.50'
+        )
+        form = FacturaCompraForm(instance=invoice, data={
+            'proveedor': self.proveedor.pk,
+            'fecha': '2026-11-20',
+            'numero_documento': 'F-003 corregida',
+            'tipo_documento': 'Factura',
+            'monto': '1000.50',
+            'observaciones': ''
+        })
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.fields['monto'].widget.attrs['step'], '0.01')
+        changed_form = FacturaCompraForm(instance=invoice, data={
+            'proveedor': self.proveedor.pk,
+            'fecha': '2026-11-20',
+            'numero_documento': 'F-003 corregida',
+            'tipo_documento': 'Factura',
+            'monto': '1000.75',
+            'observaciones': ''
+        })
+        self.assertFalse(changed_form.is_valid())
+        self.assertIn('monto', changed_form.errors)
+
+    def test_existing_fractional_unit_price_can_be_kept_unchanged(self):
+        invoice = FacturaCompra.objects.create(
+            proveedor=self.proveedor,
+            fecha='2026-11-20',
+            numero_documento='F-004',
+            tipo_documento='Factura',
+            monto='1000'
+        )
+        detail = FacturaCompraDetalle.objects.create(
+            factura=invoice,
+            articulo=self.kg_article,
+            cantidad='1.25',
+            precio_unitario='100.50'
+        )
+        form = FacturaCompraDetalleForm(instance=detail, data={
+            'articulo': self.kg_article.pk,
+            'cantidad': '1.25',
+            'precio_unitario': '100.50'
+        })
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.fields['precio_unitario'].widget.attrs['step'], '0.01')
 
     def test_api_details_require_at_least_one_valid_line(self):
         details, errors = _validate_invoice_details([{
@@ -142,3 +225,35 @@ class FacturaCompraDetailsTests(TestCase):
         details, errors = _validate_invoice_details([], required=False)
         self.assertEqual(details, [])
         self.assertEqual(errors, {})
+
+    def test_api_accepts_unchanged_historical_fractional_price(self):
+        invoice = FacturaCompra.objects.create(
+            proveedor=self.proveedor,
+            fecha='2026-11-20',
+            numero_documento='F-005',
+            tipo_documento='Factura',
+            monto='1000'
+        )
+        detail = FacturaCompraDetalle.objects.create(
+            factura=invoice,
+            articulo=self.kg_article,
+            cantidad='1.25',
+            precio_unitario='100.50'
+        )
+        details, errors = _validate_invoice_details([{
+            'id': detail.pk,
+            'articulo': self.kg_article.pk,
+            'cantidad': '1.25',
+            'precio_unitario': '100.50'
+        }], existing_details=invoice.detalles.all())
+        self.assertEqual(errors, {})
+        self.assertEqual(details[0].precio_unitario, Decimal('100.50'))
+
+        details, errors = _validate_invoice_details([{
+            'id': detail.pk,
+            'articulo': self.kg_article.pk,
+            'cantidad': '1.25',
+            'precio_unitario': '100.75'
+        }], existing_details=invoice.detalles.all())
+        self.assertIsNone(details)
+        self.assertIn('detalles.0.precio_unitario', errors)

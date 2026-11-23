@@ -291,6 +291,43 @@ class InventoryApiTests(TestCase):
         self.invoice_line.refresh_from_db()
         self.assertEqual(self.invoice_line.cantidad, Decimal('5'))
 
+    def test_locked_invoice_without_detail_lines_shows_received_items(self):
+        invoice = FacturaCompra.objects.create(
+            proveedor=self.provider,
+            fecha='2026-11-21',
+            numero_documento='legacy-779',
+            tipo_documento='Factura',
+            monto='3980',
+        )
+        movement = MovimientoBodega.objects.create(
+            tipo='INGRESO',
+            cantidad='2',
+            repuesto=self.article,
+            responsable=self.warehouse,
+        )
+        RecepcionIngreso.objects.create(
+            solicitud_id=uuid.uuid4(),
+            factura=invoice,
+            movimiento=movement,
+            responsable=self.warehouse,
+            unidad_medida='kg',
+            precio_unitario_neto='1990',
+            subtotal_neto='3980',
+            cantidad_disponible='2',
+        )
+        self.client.force_login(self.finance)
+
+        response = self.client.get(f'/api/facturas/{invoice.pk}/')
+
+        self.assertEqual(response.status_code, 200)
+        item = response.json()['item']
+        self.assertTrue(item['detalles_bloqueados'])
+        self.assertEqual(item['detalles'], [{
+            'articulo_nombre': 'CL-01 — Clavos',
+            'cantidad': '2.00',
+            'precio_unitario': '1990.00',
+        }])
+
     def edit_unit(self, unit):
         return self.post(
             f'/api/articulos/{self.article.pk}/',

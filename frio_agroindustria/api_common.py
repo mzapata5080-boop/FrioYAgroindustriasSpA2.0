@@ -52,9 +52,13 @@ def schema(form):
         item={'name':name,'label':str(f.label or name.replace('_',' ').capitalize()),'type':kind,'required':f.required}
         if f.initial is not None and kind not in ('hidden', 'password'):
             item['initial'] = f.initial
-        if kind=='select': item['choices']=[[str(k),str(v)] for k,v in f.choices]
+        if kind=='select':
+            item['choices']=[[str(k),str(v)] for k,v in f.choices]
+            item['multiple']=f.widget.allow_multiple_selected
         if isinstance(f, forms.DecimalField):
-            item['step'] = str(Decimal(1).scaleb(-f.decimal_places))
+            item['step'] = str(f.widget.attrs.get(
+                'step', Decimal(1).scaleb(-f.decimal_places)
+            ))
             if f.min_value is not None: item['min'] = str(f.min_value)
             if f.max_value is not None: item['max'] = str(f.max_value)
         if getattr(f,'max_length',None): item['maxLength']=f.max_length
@@ -85,6 +89,14 @@ def serialize(obj):
             'cantidad': str(detail.cantidad),
             'precio_unitario': str(detail.precio_unitario),
         } for detail in details]
+        if not d['detalles']:
+            d['detalles'] = [{
+                'articulo_nombre': str(receipt.movimiento.repuesto),
+                'cantidad': str(receipt.movimiento.cantidad),
+                'precio_unitario': str(receipt.precio_unitario_neto),
+            } for receipt in RecepcionIngreso.objects.filter(factura=obj).select_related(
+                'movimiento__repuesto'
+            ).order_by('movimiento__fecha_registro', 'movimiento_id')]
     if isinstance(obj,MovimientoBodega):
         d.update(fecha_registro=obj.fecha_registro,articulo=str(obj.repuesto))
         try: d['responsable']=str(obj.recepcioningreso.responsable)

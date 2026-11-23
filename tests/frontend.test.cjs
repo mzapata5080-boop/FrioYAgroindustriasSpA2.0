@@ -14,6 +14,7 @@ class Element {
  dispatchEvent(event){this[`on${event.type}`]?.(event);for(const fn of this.listeners[event.type]||[])fn(event);}
  scrollIntoView(){}
  get options(){return this.children;}
+ get selectedOptions(){return this.children.filter(option=>option.selected);}
  get text(){return (this.textContent + ' ' + this.children.map(c=>c.text).join(' ')).trim();}
  find(predicate){for(const child of this.children){if(predicate(child))return child;const found=child.find(predicate);if(found)return found;}return null;}
  querySelector(selector){const match=selector.match(/^label\[for="(.+)"\]$/);return this.find(n=>n.tag==='label'&&n.htmlFor===match[1]);}
@@ -43,12 +44,12 @@ const fields=[
 ];
 test('subtotales exactos y redondeo equivalentes al backend',()=>{
  const {ctx}=context();
- assert.equal(ctx.formatSubtotal('20','2900'),'$58.000,00 CLP');
- assert.equal(ctx.formatSubtotal('1.50','1990'),'$2.985,00 CLP');
+ assert.equal(ctx.formatSubtotal('20','2900'),'$58.000 CLP');
+ assert.equal(ctx.formatSubtotal('1.50','1990'),'$2.985 CLP');
  assert.equal(ctx.formatSubtotal('0.01','0.50'),'$0,01 CLP');
  assert.equal(ctx.formatSubtotal('1.005','20'),'—');
  assert.equal(ctx.formatSubtotal('','20'),'—');
- assert.equal(ctx.formatSubtotal('1,50','1990'),'$2.985,00 CLP');
+ assert.equal(ctx.formatSubtotal('1,50','1990'),'$2.985 CLP');
 });
 test('facturas filtran sus artículos pendientes',()=>{
  const {ctx,nodes}=context();ctx.showForm(fields);const form=nodes['edit-form'];
@@ -62,6 +63,56 @@ test('facturas filtran sus artículos pendientes',()=>{
  const line=form.find(n=>n.id==='receipt-detail-line-1');
  assert.equal(line.options.length,3);
  assert.equal(line.options[1].value,'101');
+});
+test('factura recibida muestra sus artículos en tabla solo lectura',()=>{
+ const {ctx,nodes}=context();ctx.current='facturas';
+ ctx.showForm([{name:'detalles',label:'Artículos de la factura',type:'details',required:true}],{
+  id:9,detalles_bloqueados:true,
+  detalles:[{articulo_nombre:'Válvula',cantidad:'2',precio_unitario:'1500.00'}]
+ });
+ const rows=nodes['edit-form'].find(n=>n.id==='invoice-details-list');
+ const table=rows.find(n=>n.tag==='table');
+ assert.ok(table);
+ assert.deepEqual(table.find(n=>n.tag==='tr').children.map(cell=>cell.textContent),[
+  'Artículo','Cantidad facturada','Precio unitario'
+ ]);
+ assert.deepEqual(table.find(n=>n.tag==='tbody').children[0].children.map(cell=>cell.textContent),[
+  'Válvula','2','$1.500 CLP'
+ ]);
+ assert.equal(rows.find(n=>n.tag==='input'),null);
+});
+test('factura organiza los datos y calcula subtotales de artículos',()=>{
+ const {ctx,nodes}=context();ctx.current='facturas';
+ ctx.showForm([
+  {name:'monto',label:'Monto total',type:'number',required:true,step:'1'},
+  {name:'detalles',label:'Artículos de la factura',type:'details',required:true}
+ ]);
+ const form=nodes['edit-form'];
+ assert.ok(form.find(n=>String(n.className || '').includes('invoice-fields-grid')));
+ assert.ok(form.find(n=>String(n.className || '').includes('invoice-lines-table')));
+ const quantity=form.find(n=>n.id==='invoice-detail-quantity-1');
+ const price=form.find(n=>n.id==='invoice-detail-price-1');
+ assert.equal(price.step,'1');
+ quantity.value='2';quantity.dispatchEvent(new ctx.Event('input'));
+ price.value='1000';price.dispatchEvent(new ctx.Event('input'));
+ const summary=form.find(n=>String(n.className || '').includes('invoice-summary'));
+ assert.equal(summary.children[0].children[1].textContent,'$2.000 CLP');
+ const amount=form.elements.namedItem('monto');
+ amount.value='1800';amount.dispatchEvent(new ctx.Event('input'));
+ assert.equal(summary.children[1].children[1].textContent,'$1.800 CLP');
+});
+test('edición conserva los valores fraccionarios históricos sin permitir precios fraccionarios nuevos',()=>{
+ const {ctx,nodes}=context();ctx.current='facturas';
+ ctx.showForm([
+  {name:'monto',label:'Monto total',type:'number',required:true,step:'1'},
+  {name:'detalles',label:'Artículos de la factura',type:'details',required:true}
+ ],{
+  monto:'1000.50',
+  detalles:[{id:12,articulo:1,cantidad:'1.25',precio_unitario:'100.50'}]
+ });
+ const form=nodes['edit-form'];
+ assert.equal(form.elements.namedItem('monto').step,'0.01');
+ assert.equal(form.find(n=>n.id==='invoice-detail-price-1').step,'0.01');
 });
 test('unidad, precio por kilogramo y subtotal se actualizan al seleccionar',()=>{
  const {ctx,nodes}=context();ctx.showForm(fields);const form=nodes['edit-form'];
@@ -123,7 +174,9 @@ function outputContext() {
       articles: [
         { id: 1, codigo_parte: 'CL-01', descripcion: 'Clavos', unidad_medida: 'kg', stock_actual: '15.50' },
         { id: 2, codigo_parte: 'VAL-01', descripcion: 'Válvula', unidad_medida: 'unidad', stock_actual: '4' }
-      ]
+      ],
+      works: [{ id: 5, cliente_id: 7, codigo_ot: 'OT-2026-05' }],
+      materialRequests: [{ id: 11, obra_id: 5, articulo_id: 2, cantidad_pendiente: '3' }]
     },
     $: id => nodes[id],
     node: (tag, text, cls) => { const n = new Element(tag); if (text !== undefined) n.textContent = text; n.className = cls; return n; },
@@ -160,6 +213,79 @@ test('en salidas la unidad y el stock disponible se toman desde el artículo', (
   assert.equal(form.find(n => n.id === 'output-unit').value, 'Unidades');
   assert.equal(qty.step, '1');
   assert.equal(qty.max, '4');
+});
+
+test('al elegir una obra en una salida se completan cliente y número OT', () => {
+  const { ctx, nodes } = outputContext();
+  ctx.showForm([
+    { name: 'articulo', label: 'Artículo', type: 'select', required: true, choices: [['', 'Selecciona'], ['1', 'Clavos']] },
+    { name: 'cantidad', label: 'Cantidad', type: 'number', required: true, step: '0.01', min: '0.01' },
+    { name: 'obra', label: 'Obra', type: 'select', required: false, choices: [['', 'Selecciona'], ['5', 'OT-2026-05']] },
+    { name: 'cliente', label: 'Cliente', type: 'select', required: false, choices: [['', 'Selecciona'], ['7', 'Cliente 7']] },
+    { name: 'numero_ot', label: 'Número OT', type: 'text', required: false }
+  ]);
+  const form = nodes['edit-form'];
+  const work = form.elements.namedItem('obra');
+  const client = form.elements.namedItem('cliente');
+  const workOrder = form.elements.namedItem('numero_ot');
+
+  work.value = '5';
+  work.dispatchEvent(new ctx.Event('change'));
+
+  assert.equal(client.value, '7');
+  assert.equal(workOrder.value, 'OT-2026-05');
+});
+
+test('al elegir una solicitud aprobada se completan obra, cliente, artículo y cantidad pendiente', () => {
+  const { ctx, nodes } = outputContext();
+  ctx.showForm([
+    { name: 'solicitud_material', label: 'Solicitud aprobada', type: 'select', required: false, choices: [['', 'Selecciona'], ['11', 'Solicitud 11']] },
+    { name: 'obra', label: 'Obra', type: 'select', required: false, choices: [['', 'Selecciona'], ['5', 'OT-2026-05']] },
+    { name: 'cliente', label: 'Cliente', type: 'select', required: false, choices: [['', 'Selecciona'], ['7', 'Cliente 7']] },
+    { name: 'articulo', label: 'Artículo', type: 'select', required: true, choices: [['', 'Selecciona'], ['1', 'Clavos'], ['2', 'Válvula']] },
+    { name: 'cantidad', label: 'Cantidad', type: 'number', required: true, step: '0.01', min: '0.01' },
+    { name: 'numero_ot', label: 'Número OT', type: 'text', required: false }
+  ]);
+  const form = nodes['edit-form'];
+  const materialRequest = form.elements.namedItem('solicitud_material');
+  materialRequest.value = '11';
+  materialRequest.dispatchEvent(new ctx.Event('change'));
+
+  assert.equal(form.elements.namedItem('obra').value, '5');
+  assert.equal(form.elements.namedItem('cliente').value, '7');
+  assert.equal(form.elements.namedItem('articulo').value, '2');
+  assert.equal(form.elements.namedItem('cantidad').value, '3');
+  assert.equal(form.elements.namedItem('numero_ot').value, 'OT-2026-05');
+});
+
+test('en obras se eligen varios técnicos desde el desplegable y aparecen enumerados', async () => {
+  const { ctx, nodes } = context();
+  const payloads = [];
+  ctx.current = 'obras';
+  ctx.api = async (path, payload) => { payloads.push(payload); return {}; };
+  ctx.showForm([{
+    name: 'tecnicos', label: 'Técnicos asignados', type: 'select', multiple: true,
+    required: false, choices: [['1', 'Ana Pérez'], ['2', 'Luis Soto']]
+  }]);
+
+  const form = nodes['edit-form'];
+  const select = form.elements.namedItem('tecnicos');
+  const menu = form.find(n => n.id === 'field-tecnicos-choices');
+  const toggle = form.find(n => n.tag === 'button' && n.textContent === 'Seleccionar técnicos');
+  assert.equal(select.hidden, true);
+  toggle.onclick();
+  assert.equal(menu.hidden, false);
+
+  const checkboxes = menu.children.map(label => label.children[0]);
+  checkboxes[0].checked = true;
+  checkboxes[0].onchange();
+  checkboxes[1].checked = true;
+  checkboxes[1].onchange();
+  const selected = form.find(n => n.tag === 'ol');
+  assert.deepEqual(selected.children.map(item => item.textContent), ['Ana Pérez', 'Luis Soto']);
+
+  await form.onsubmit({ preventDefault() {} });
+  assert.deepEqual(JSON.parse(JSON.stringify(payloads[0].tecnicos)), ['1', '2']);
 });
 
 function dashboardContext(user) {
@@ -279,7 +405,7 @@ test('facturas permiten agregar y enviar varios artículos en una sola operació
     { name: 'detalles', label: 'Artículos', type: 'details', required: true }
   ]);
   const form = nodes['edit-form'];
-  const rows = form.find(n => n.id === 'invoice-details-list');
+  const rows = form.find(n => n.id === 'invoice-details-list').find(n => n.tag === 'tbody');
   const addButton = form.find(n => n.textContent === 'Agregar artículo');
   addButton.onclick();
   assert.equal(rows.children.length, 2);
@@ -305,7 +431,10 @@ test('facturas permiten agregar y enviar varios artículos en una sola operació
     { name: 'observaciones', label: 'Observaciones', type: 'textarea', required: false },
     { name: 'detalles', label: 'Artículos', type: 'details', required: true }
   ], { id: 20, numero_documento: 'F-020', monto: '50', detalles: [] });
-  assert.equal(nodes['edit-form'].find(n => n.id === 'invoice-details-list').children.length, 0);
+  assert.equal(
+    nodes['edit-form'].find(n => n.id === 'invoice-details-list').find(n => n.tag === 'tbody').children.length,
+    0
+  );
   await nodes['edit-form'].onsubmit({ preventDefault() {} });
   assert.deepEqual(JSON.parse(JSON.stringify(payloads[1].detalles)), []);
 });

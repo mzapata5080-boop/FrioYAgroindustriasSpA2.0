@@ -9,6 +9,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
 from finanzas.models import Cliente, FacturaCompra, FacturaCompraDetalle, Proveedor
 from inventario.models import CategoriaRepuesto, Repuesto
+from obras.forms import ObraForm, PresupuestoForm
 from obras.models import Obra, SolicitudMaterial
 from usuarios.models import Trabajador
 
@@ -99,6 +100,141 @@ class ObrasSolicitudesSalidasTests(TestCase):
         })
         self.assertEqual(resp.status_code, 201, resp.content)
         return Obra.objects.get(codigo_ot='OT-2026-01')
+
+    def test_obra_form_marks_tecnicos_as_multiple_select(self):
+        self.client.force_login(self.sup1)
+        response = self.client.get('/api/obras/')
+
+        self.assertEqual(response.status_code, 200)
+        fields = {field['name']: field for field in response.json()['fields']}
+        self.assertTrue(fields['tecnicos']['multiple'])
+        self.assertEqual(fields['presupuesto_estimado']['step'], '1')
+
+    def test_obra_and_presupuesto_reject_new_fractional_amounts(self):
+        obra_form = ObraForm(data={
+            'codigo_ot': 'OT-PRECIO-01',
+            'nombre': 'Obra con presupuesto decimal',
+            'cliente': self.cliente.pk,
+            'tipo_servicio': 'INSTALACION',
+            'presupuesto_estimado': '1000.50',
+            'direccion': 'Curicó',
+            'estado': 'EN_EJECUCION',
+            'fecha_inicio': '2026-11-21',
+            'fecha_termino_estimada': '2026-12-15',
+            'supervisor': self.sup1.pk,
+            'tecnicos': [],
+        })
+        self.assertFalse(obra_form.is_valid())
+        self.assertIn('presupuesto_estimado', obra_form.errors)
+
+        obra = Obra.objects.create(
+            codigo_ot='OT-PRECIO-02',
+            nombre='Obra para presupuesto',
+            cliente=self.cliente,
+            supervisor=self.sup1,
+        )
+        presupuesto_form = PresupuestoForm(data={
+            'obra': obra.pk,
+            'version': '1',
+            'estado': 'BORRADOR',
+            'monto_materiales_estimado': '1000.50',
+            'monto_mano_obra_estimado': '0',
+            'monto_otros_estimado': '0',
+            'observaciones': '',
+        })
+        self.assertFalse(presupuesto_form.is_valid())
+        self.assertIn('monto_materiales_estimado', presupuesto_form.errors)
+
+        historical_obra = Obra.objects.create(
+            codigo_ot='OT-PRECIO-03',
+            nombre='Obra con valor histórico',
+            cliente=self.cliente,
+            supervisor=self.sup1,
+            presupuesto_estimado='1000.50',
+        )
+        historical_obra_form = ObraForm(instance=historical_obra, data={
+            'codigo_ot': historical_obra.codigo_ot,
+            'nombre': 'Obra con valor histórico editada',
+            'cliente': self.cliente.pk,
+            'tipo_servicio': 'INSTALACION',
+            'presupuesto_estimado': '1000.50',
+            'direccion': '',
+            'estado': 'PLANIFICADA',
+            'fecha_inicio': '',
+            'fecha_termino_estimada': '',
+            'supervisor': self.sup1.pk,
+            'tecnicos': [],
+        })
+        self.assertTrue(historical_obra_form.is_valid(), historical_obra_form.errors)
+        self.assertEqual(
+            historical_obra_form.fields['presupuesto_estimado'].widget.attrs['step'],
+            '0.01'
+        )
+
+        historical_budget = Obra.objects.get(pk=obra.pk).presupuestos.create(
+            version=1,
+            monto_materiales_estimado='1000.50',
+        )
+        historical_budget_form = PresupuestoForm(instance=historical_budget, data={
+            'obra': obra.pk,
+            'version': '1',
+            'estado': 'BORRADOR',
+            'monto_materiales_estimado': '1000.50',
+            'monto_mano_obra_estimado': '0',
+            'monto_otros_estimado': '0',
+            'observaciones': 'Ajuste de descripción',
+        })
+        self.assertTrue(historical_budget_form.is_valid(), historical_budget_form.errors)
+        self.assertEqual(
+            historical_budget_form.fields['monto_materiales_estimado'].widget.attrs['step'],
+            '0.01'
+        )
+
+    def test_salida_form_includes_obra_cliente_mapping(self):
+        obra = Obra.objects.create(
+            codigo_ot='OT-SALIDA-01',
+            nombre='Obra para salida',
+            cliente=self.cliente,
+            supervisor=self.sup1,
+        )
+        self.client.force_login(self.bodega)
+
+        response = self.client.get('/api/salidas/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn({
+            'id': obra.pk,
+            'cliente_id': self.cliente.pk,
+            'codigo_ot': obra.codigo_ot,
+        }, response.json()['works'])
+
+    def test_salida_form_includes_approved_request_article_and_pending_quantity(self):
+        obra = Obra.objects.create(
+            codigo_ot='OT-SALIDA-02',
+            nombre='Obra con solicitud',
+            cliente=self.cliente,
+            supervisor=self.sup1,
+        )
+        solicitud = SolicitudMaterial.objects.create(
+            obra=obra,
+            articulo=self.art,
+            cantidad_solicitada='5',
+            cantidad_reservada='5',
+            cantidad_entregada='2',
+            estado='PARCIAL',
+            solicitado_por=self.sup1,
+        )
+        self.client.force_login(self.bodega)
+
+        response = self.client.get('/api/salidas/')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn({
+            'id': solicitud.pk,
+            'obra_id': obra.pk,
+            'articulo_id': self.art.pk,
+            'cantidad_pendiente': '3.00',
+        }, response.json()['materialRequests'])
 
     def test_supervisor_solo_ve_su_obra_y_sus_documentos(self):
         obra1 = self.crear_obra_sup1()
