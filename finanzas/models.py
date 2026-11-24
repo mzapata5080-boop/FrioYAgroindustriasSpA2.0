@@ -129,7 +129,20 @@ class Proveedor(models.Model):
     def __str__(self):
         return f"{self.rut} - {self.razon_social}"
     
-class FacturaCompra(models.Model):
+class CondicionesComerciales(models.Model):
+    calculo_activo = models.BooleanField(default=False)
+    descuento_general = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    descuento_pronto_pago = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    tasa_iva = models.DecimalField(max_digits=5, decimal_places=2, default=19)
+    calculo_comercial = models.JSONField(null=True, blank=True, default=None, editable=False)
+
+    class Meta:
+        abstract = True
+
+
+class FacturaCompra(CondicionesComerciales):
+    confirmada = models.BooleanField(default=False)
+
 
     proveedor = models.ForeignKey(
     Proveedor,
@@ -167,6 +180,12 @@ class FacturaCompra(models.Model):
 
 
 class FacturaCompraDetalle(models.Model):
+    precio_lista = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+
+    descuento_1 = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    descuento_2 = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    descuento_3 = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+
 
     factura = models.ForeignKey(
         FacturaCompra,
@@ -285,7 +304,7 @@ class RecepcionDetalle(models.Model):
         return f"{self.detalle_factura.articulo} x {self.cantidad}"
 
 
-class Presupuesto(models.Model):
+class Presupuesto(CondicionesComerciales):
     ESTADOS = [
         ("BORRADOR", "Borrador"),
         ("APROBADO", "Aprobado"),
@@ -336,6 +355,8 @@ class Presupuesto(models.Model):
 
     @property
     def total(self):
+        if self.calculo_comercial is not None:
+            return Decimal(self.calculo_comercial['total'])
         return sum(
             (detalle.subtotal for detalle in self.detalles.all()),
             Decimal("0.00"),
@@ -385,6 +406,10 @@ class Presupuesto(models.Model):
 
 
 class PresupuestoDetalle(models.Model):
+    descuento_1 = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    descuento_2 = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    descuento_3 = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+
     presupuesto = models.ForeignKey(
         Presupuesto,
         on_delete=models.CASCADE,
@@ -412,6 +437,12 @@ class PresupuestoDetalle(models.Model):
 
     @property
     def subtotal(self):
+        if any((self.descuento_1, self.descuento_2, self.descuento_3)):
+            from .calculos import calcular_documento
+            return Decimal(calcular_documento([{
+                'cantidad': self.cantidad, 'precio_unitario': self.precio_unitario,
+                **{f'descuento_{n}': getattr(self, f'descuento_{n}') for n in (1,2,3)}
+            }], tasa_iva='0')['neto'])
         return self.cantidad * self.precio_unitario
 
     def clean(self):
@@ -647,3 +678,28 @@ class NotaCredito(models.Model):
 
     def __str__(self):
         return self.numero_documento
+
+class PrecioArticulo(models.Model):
+    articulo = models.ForeignKey('inventario.Repuesto', on_delete=models.PROTECT, related_name='historial_precios')
+    precio_compra = models.DecimalField(max_digits=12, decimal_places=2)
+    precio_lista = models.DecimalField(max_digits=12, decimal_places=2)
+    margen = models.DecimalField(max_digits=10, decimal_places=2, editable=False)
+    fecha = models.DateTimeField(auto_now_add=True)
+    registrado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+
+    class Meta:
+        ordering = ['-fecha', '-pk']
+        constraints = [
+            models.CheckConstraint(condition=models.Q(precio_compra__gte=0), name='fyag_precio_compra_no_neg'),
+            models.CheckConstraint(condition=models.Q(precio_lista__gt=0), name='fyag_precio_lista_positivo'),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self._state.adding:
+            raise ValidationError('Los precios históricos son inmutables; registra un precio nuevo.')
+        from .calculos import margen_sobre_venta
+        self.margen = margen_sobre_venta(self.precio_compra, self.precio_lista)
+        return super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError('No se permite eliminar precios históricos.')

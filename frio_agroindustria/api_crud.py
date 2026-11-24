@@ -12,7 +12,8 @@ from frio_agroindustria.api_resources import RESOURCES
 from inventario.api import movements
 from inventario.models import Repuesto, RecepcionIngreso
 from finanzas.forms import FacturaCompraDetalleForm
-from finanzas.models import FacturaCompraDetalle
+from finanzas.models import FacturaCompraDetalle, FacturaCompra, Presupuesto, PresupuestoDetalle
+from finanzas.comercial import actualizar_totales
 
 
 def _resource_fields(resource, formclass, instance=None):
@@ -29,6 +30,12 @@ def _resource_fields(resource, formclass, instance=None):
 
 
 def _resource_options(resource):
+    if resource == 'detalles-presupuesto':
+        from finanzas.models import PrecioArticulo
+        precios = {}
+        for precio in PrecioArticulo.objects.order_by('-fecha', '-pk'):
+            precios.setdefault(str(precio.articulo_id), str(precio.precio_lista))
+        return {'list_prices': precios}
     if resource != 'facturas':
         return {}
     return {
@@ -79,6 +86,8 @@ def _validate_invoice_details(raw_details, required=True, existing_details=()):
             articulo=form.cleaned_data['articulo'],
             cantidad=form.cleaned_data['cantidad'],
             precio_unitario=form.cleaned_data['precio_unitario'],
+            **{f'descuento_{n}': form.cleaned_data[f'descuento_{n}'] for n in (1,2,3)},
+            precio_lista=form.cleaned_data.get('precio_lista'),
         ))
 
     if errors:
@@ -155,6 +164,11 @@ def collection(request, resource):
 
     try:
         with transaction.atomic():
+            if resource == 'detalles-presupuesto':
+                padre = Presupuesto.objects.select_for_update().get(pk=form.cleaned_data['presupuesto'].pk)
+                if padre.estado != 'BORRADOR':
+                    return error('El presupuesto ya fue resuelto.')
+                form.instance.presupuesto = padre
             if resource == 'notas-credito':
                 obj = form.save(commit=False)
                 obj.registrado_por = request.user
@@ -164,6 +178,10 @@ def collection(request, resource):
                 obj = form.save()
             if resource == 'facturas':
                 _save_invoice_details(obj, invoice_details)
+            if resource in ('facturas', 'presupuestos-venta'):
+                actualizar_totales(obj)
+            elif resource == 'detalles-presupuesto':
+                actualizar_totales(padre)
             registrar_cambio(request.user, 'CREAR', obj)
     except ValidationError as exc:
         errors = exc.message_dict if hasattr(exc, 'message_dict') else {
@@ -218,6 +236,18 @@ def detail(request, resource, pk):
         with transaction.atomic():
             obj = model.objects.select_for_update().get(pk=pk)
             antes = snapshot_instance(obj)
+            if resource == 'facturas' and obj.confirmada:
+                return error('La factura está confirmada; no se puede modificar.', 403)
+            if resource == 'facturas' and (obj.recepciones_compra.exists() or RecepcionIngreso.objects.filter(factura=obj).exists()):
+                financieros = {'monto', 'descuento_general', 'descuento_pronto_pago', 'tasa_iva', 'calcular_totales'}
+                if any(k in d and str(d[k]) != str(getattr(obj, k, obj.calculo_activo)) for k in financieros):
+                    return error('La factura tiene recepciones: conserva sus valores financieros.', 403)
+            if resource == 'detalles-presupuesto':
+                padre = Presupuesto.objects.select_for_update().get(pk=obj.presupuesto_id)
+                if padre.estado != 'BORRADOR':
+                    return error('El presupuesto ya fue resuelto.')
+                if 'presupuesto' in d and str(d['presupuesto']) != str(padre.pk):
+                    return error('No se permite mover un detalle a otro presupuesto.')
             if (
                 resource == 'facturas'
                 and raw_details is not None
@@ -255,7 +285,13 @@ def detail(request, resource, pk):
             obj = form.save()
             if resource == 'facturas' and invoice_details is not None:
                 _save_invoice_details(obj, invoice_details, replace=True)
+            if resource in ('facturas', 'presupuestos-venta'):
+                actualizar_totales(obj)
+            elif resource == 'detalles-presupuesto':
+                actualizar_totales(padre)
             registrar_cambio(request.user, 'EDITAR', obj, antes=antes)
+    except ValidationError as exc:
+        return JsonResponse({'errors': exc.message_dict if hasattr(exc, 'message_dict') else {'error': exc.messages}}, status=400)
     except model.DoesNotExist:
         return error('Registro no encontrado.', 404)
     except IntegrityError:

@@ -92,7 +92,7 @@ test('factura organiza los datos y calcula subtotales de artículos',()=>{
  assert.ok(form.find(n=>String(n.className || '').includes('invoice-lines-table')));
  const quantity=form.find(n=>n.id==='invoice-detail-quantity-1');
  const price=form.find(n=>n.id==='invoice-detail-price-1');
- assert.equal(price.step,'1');
+ assert.equal(price.step,'0.01');
  quantity.value='2';quantity.dispatchEvent(new ctx.Event('input'));
  price.value='1000';price.dispatchEvent(new ctx.Event('input'));
  const summary=form.find(n=>String(n.className || '').includes('invoice-summary'));
@@ -322,6 +322,7 @@ function dashboardContext(user) {
     api: async () => ({}),
     load: async () => {},
     showForm: () => {},
+    abrirOperaciones: () => {},
     current: '',
     metadata: null,
     loadVersion: 0
@@ -421,8 +422,8 @@ test('facturas permiten agregar y enviar varios artículos en una sola operació
 
   await form.onsubmit({ preventDefault() {} });
   assert.deepEqual(JSON.parse(JSON.stringify(payloads[0].detalles)), [
-    { articulo: '1', cantidad: '1.50', precio_unitario: '100' },
-    { articulo: '2', cantidad: '2', precio_unitario: '50' }
+    { articulo: '1', cantidad: '1.50', precio_unitario: '100', descuento_1: '0', descuento_2: '0', descuento_3: '0', precio_lista: '' },
+    { articulo: '2', cantidad: '2', precio_unitario: '50', descuento_1: '0', descuento_2: '0', descuento_3: '0', precio_lista: '' }
   ]);
 
   ctx.showForm([

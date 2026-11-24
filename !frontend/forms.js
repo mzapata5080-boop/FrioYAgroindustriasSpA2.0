@@ -213,7 +213,7 @@ function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false,
 
  const table = node('table', undefined, 'table table-bordered align-middle invoice-lines-table');
  const head = node('thead'), headerRow = node('tr');
- ['Artículo', 'Cantidad', 'Precio unitario', 'Subtotal', ''].forEach(title => {
+ ['Artículo', 'Cantidad', 'Precio unitario', 'D1 %', 'D2 %', 'D3 %', 'Precio lista', 'Subtotal', ''].forEach(title => {
   headerRow.append(node('th', title));
  });
  head.append(headerRow);
@@ -226,7 +226,7 @@ function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false,
  const amountValue = node('strong', '—');
  const summary = node('div', undefined, 'invoice-summary');
  const subtotalRow = node('div', undefined, 'invoice-summary-row');
- subtotalRow.append(node('span', 'Subtotal de artículos'), subtotalValue);
+ subtotalRow.append(node('span', 'Bruto de artículos (antes de descuentos)'), subtotalValue);
  const amountRow = node('div', undefined, 'invoice-summary-row');
  amountRow.append(node('span', 'Monto indicado en factura'), amountValue);
  summary.append(subtotalRow, amountRow);
@@ -288,7 +288,7 @@ function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false,
   price.type = 'number';
   price.className = 'form-control';
   price.min = '0';
-  price.step = '1';
+  price.step = '0.01';
   price.required = true;
   price.value = detail.precio_unitario ?? '';
   allowExistingFraction(price, detail.precio_unitario);
@@ -296,6 +296,15 @@ function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false,
   price.id = priceLabel.htmlFor;
   priceCell.append(priceLabel, price);
 
+  const discountInputs = [1, 2, 3].map(n => {
+   const input = node('input'); input.type = 'number'; input.min = '0'; input.max = '100';
+   input.step = '0.01'; input.value = detail[`descuento_${n}`] ?? '0'; input.className = 'form-control';
+   input.setAttribute('aria-label', `Descuento ${n} (%)`); return input;
+  });
+  const listPrice = node('input'); listPrice.type = 'number'; listPrice.min = '0.01'; listPrice.step = '0.01';
+  listPrice.value = detail.precio_lista ?? ''; listPrice.className = 'form-control';
+  listPrice.setAttribute('aria-label', 'Precio de lista (CLP)');
+  const extraCells = [...discountInputs, listPrice].map(input => { const cell = node('td'); cell.append(input); return cell; });
   const lineSubtotal = node('td', '—', 'text-end text-nowrap');
   const actionCell = node('td');
   const removeButton = node('button', 'Quitar', 'btn btn-outline-danger w-100');
@@ -315,9 +324,9 @@ function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false,
   price.addEventListener('input', updateSummary);
   updateQuantityStep();
 
-  row.append(articleCell, quantityCell, priceCell, lineSubtotal, actionCell);
+  row.append(articleCell, quantityCell, priceCell, ...extraCells, lineSubtotal, actionCell);
   body.append(row);
-  rows.push({ id: detail.id, row, articleSelect, quantity, price, lineSubtotal });
+  rows.push({ id: detail.id, row, articleSelect, quantity, price, lineSubtotal, discountInputs, listPrice });
   updateSummary();
  }
 
@@ -335,7 +344,11 @@ function attachInvoiceDetails(form, context, initialDetails, allowEmpty = false,
    ...(entry.id ? { id: entry.id } : {}),
    articulo: entry.articleSelect.value,
    cantidad: entry.quantity.value,
-   precio_unitario: entry.price.value
+   precio_unitario: entry.price.value,
+   descuento_1: entry.discountInputs[0].value || '0',
+   descuento_2: entry.discountInputs[1].value || '0',
+   descuento_3: entry.discountInputs[2].value || '0',
+   precio_lista: entry.listPrice.value
   }));
 }
 
@@ -486,6 +499,7 @@ function showForm(fields, item = {}) {
   facturas: editId ? 'Editar factura de compra' : 'Registrar factura de compra',
   'presupuestos-venta': editId ? 'Editar presupuesto de venta' : 'Nuevo presupuesto de venta',
   'detalles-presupuesto': editId ? 'Editar artículo de presupuesto' : 'Agregar artículo al presupuesto',
+  precios: 'Registrar nuevo precio (conserva historial)',
   'documentos-venta': editId ? 'Editar documento de venta' : 'Nuevo documento de venta',
   'notas-credito': editId ? 'Editar nota de crédito' : 'Registrar nota de crédito',
   ingresos: 'Registrar ingreso',
@@ -633,6 +647,7 @@ function showForm(fields, item = {}) {
   ? attachReceiptDetails(form, context)
   : null;
 
+ if (typeof attachCommercial === 'function') attachCommercial(form, resource, item, context, invoiceDetails);
  if (resource === 'salidas') attachOutputDetails(form, context);
  if (resource === 'solicitudes') attachSolicitudDetails(form, context);
 

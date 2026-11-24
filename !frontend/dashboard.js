@@ -73,6 +73,7 @@ function renderSession() {
   action('proveedores', 'Gestión de Proveedores', 'btn-warning'),
   action('clientes', 'Administración de Clientes', 'btn-outline-warning'),
   action('facturas', 'Facturas de Compra', 'btn-outline-warning'),
+  action('precios', 'Precios e historial', 'btn-outline-warning'),
   action('presupuestos-venta', 'Presupuestos de Venta', 'btn-outline-secondary'),
   action('detalles-presupuesto', 'Artículos de Presupuestos', 'btn-outline-secondary'),
   action('documentos-venta', 'Documentos de Venta', 'btn-outline-primary'),
@@ -127,7 +128,7 @@ function renderSession() {
   } else if (key === 'trabajadores' || key === 'kardex') {
    visible = can(['gerencia']);
   } else if ([
-   'clientes', 'proveedores', 'facturas', 'presupuestos-venta',
+   'clientes', 'proveedores', 'facturas', 'precios', 'presupuestos-venta',
    'detalles-presupuesto', 'documentos-venta', 'notas-credito'
   ].includes(key)) {
    visible = can(['gerencia', 'finanzas']);

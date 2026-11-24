@@ -12,6 +12,7 @@ from .models import (
     DocumentoVenta,
     PagoDocumento,
     NotaCredito,
+    PrecioArticulo,
 )
 
 class ClienteForm(forms.ModelForm):
@@ -153,7 +154,50 @@ class ProveedorForm(forms.ModelForm):
         return cleaned
 
 
-class FacturaCompraForm(forms.ModelForm):
+class CondicionesForm(forms.ModelForm):
+    calcular_totales = forms.BooleanField(required=False, initial=True, label='Calcular descuentos e IVA automáticamente')
+    descuento_general = forms.DecimalField(max_digits=5, decimal_places=2, min_value=0, max_value=100, required=False, initial=0, label='Descuento general (%)')
+    descuento_pronto_pago = forms.DecimalField(max_digits=5, decimal_places=2, min_value=0, max_value=100, required=False, initial=0, label='Pronto pago (%)')
+    tasa_iva = forms.DecimalField(max_digits=5, decimal_places=2, min_value=0, max_value=100, required=False, initial=19, label='IVA (%)')
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if self.instance.pk:
+            self.fields['calcular_totales'].initial = self.instance.calculo_activo
+        if 'monto' in self.fields:
+            self.fields['monto'].required = False
+
+    def clean(self):
+        cleaned = super().clean()
+        for name in ('descuento_general', 'descuento_pronto_pago', 'tasa_iva'):
+            if cleaned.get(name) is None:
+                cleaned[name] = getattr(self.instance, name, 19 if name == 'tasa_iva' else 0)
+        return cleaned
+
+    def save(self, commit=True):
+        obj = super().save(commit=False)
+        obj.calculo_activo = obj.calculo_activo or self.cleaned_data.get('calcular_totales', False)
+        if commit:
+            obj.save()
+            self.save_m2m()
+        return obj
+
+
+class DescuentosLineaForm(forms.ModelForm):
+    descuento_1 = forms.DecimalField(max_digits=5, decimal_places=2, min_value=0, max_value=100, required=False, initial=0, label='Descuento 1 (%)')
+    descuento_2 = forms.DecimalField(max_digits=5, decimal_places=2, min_value=0, max_value=100, required=False, initial=0, label='Descuento 2 (%)')
+    descuento_3 = forms.DecimalField(max_digits=5, decimal_places=2, min_value=0, max_value=100, required=False, initial=0, label='Descuento 3 (%)')
+
+    def clean(self):
+        cleaned = super().clean()
+        for n in (1, 2, 3):
+            name = f'descuento_{n}'
+            if cleaned.get(name) is None:
+                cleaned[name] = 0
+        return cleaned
+
+
+class FacturaCompraForm(CondicionesForm):
     class Meta:
         model = FacturaCompra
         fields = [
@@ -162,7 +206,7 @@ class FacturaCompraForm(forms.ModelForm):
             'numero_documento',
             'tipo_documento',
             'monto',
-            'observaciones'
+            'observaciones', 'calcular_totales', 'descuento_general', 'descuento_pronto_pago', 'tasa_iva'
         ]
 
         widgets = {
@@ -214,7 +258,11 @@ class FacturaCompraForm(forms.ModelForm):
                 self.fields['monto'].widget.attrs['step'] = '0.01'
 
     def clean_monto(self):
-        monto = self.cleaned_data['monto']
+        monto = self.cleaned_data.get('monto')
+        if forms.BooleanField(required=False).clean(self.data.get('calcular_totales')) or self.instance.calculo_activo:
+            return monto if monto is not None else Decimal('0')
+        if monto is None:
+            raise forms.ValidationError('Indica el monto o activa el cálculo automático.')
         if monto <= 0:
             raise forms.ValidationError(
                 "El monto de la factura debe ser mayor que cero."
@@ -229,10 +277,10 @@ class FacturaCompraForm(forms.ModelForm):
         return monto
 
 
-class FacturaCompraDetalleForm(forms.ModelForm):
+class FacturaCompraDetalleForm(DescuentosLineaForm):
     class Meta:
         model = FacturaCompraDetalle
-        fields = ['articulo', 'cantidad', 'precio_unitario']
+        fields = ['articulo', 'cantidad', 'precio_unitario', 'descuento_1', 'descuento_2', 'descuento_3', 'precio_lista']
 
         widgets = {
             'articulo': forms.Select(attrs={'class': 'form-control'}),
@@ -240,7 +288,7 @@ class FacturaCompraDetalleForm(forms.ModelForm):
                 attrs={'class': 'form-control', 'min': '0.01', 'step': '0.01'}
             ),
             'precio_unitario': forms.NumberInput(
-                attrs={'class': 'form-control', 'min': '0', 'step': '1'}
+                attrs={'class': 'form-control', 'min': '0', 'step': '0.01'}
             ),
         }
 
@@ -272,19 +320,13 @@ class FacturaCompraDetalleForm(forms.ModelForm):
     def clean_precio_unitario(self):
         precio = self.cleaned_data['precio_unitario']
         if precio < 0:
-            raise forms.ValidationError(
-                "El precio unitario no puede ser negativo."
-            )
-        if (
-            precio != precio.to_integral_value()
-            and (
-                not self.instance.pk
-                or precio != Decimal(str(self.instance.precio_unitario))
-            )
-        ):
-            raise forms.ValidationError(
-                "El precio unitario debe ingresarse en pesos enteros, sin decimales."
-            )
+            raise forms.ValidationError('El precio no puede ser negativo.')
+        return precio
+
+    def clean_precio_lista(self):
+        precio = self.cleaned_data.get('precio_lista')
+        if precio is not None and precio <= 0:
+            raise forms.ValidationError('El precio de lista debe ser mayor que cero.')
         return precio
 
     def clean(self):
@@ -296,7 +338,7 @@ class FacturaCompraDetalleForm(forms.ModelForm):
         ):
             changed = any(
                 cleaned_data.get(field) != getattr(self.instance, field)
-                for field in ('articulo', 'cantidad', 'precio_unitario')
+                for field in ('articulo', 'cantidad', 'precio_unitario', 'descuento_1', 'descuento_2', 'descuento_3', 'precio_lista')
                 if field in cleaned_data
             )
             if changed or cleaned_data.get('DELETE', False):
@@ -380,11 +422,12 @@ class RecepcionDetalleForm(forms.Form):
         return cleaned_data
 
 
-class PresupuestoForm(forms.ModelForm):
+class PresupuestoForm(CondicionesForm):
     class Meta:
         model = Presupuesto
         fields = [
-            "numero", "cliente", "obra", "fecha", "vencimiento", "observaciones"
+            "numero", "cliente", "obra", "fecha", "vencimiento", "observaciones",
+            "calcular_totales", "descuento_general", "descuento_pronto_pago", "tasa_iva"
         ]
         widgets = {
             "numero": forms.TextInput(attrs={"class": "form-control"}),
@@ -406,10 +449,10 @@ class PresupuestoForm(forms.ModelForm):
         return cleaned
 
 
-class PresupuestoDetalleForm(forms.ModelForm):
+class PresupuestoDetalleForm(DescuentosLineaForm):
     class Meta:
         model = PresupuestoDetalle
-        fields = ["presupuesto", "articulo", "cantidad", "precio_unitario"]
+        fields = ["presupuesto", "articulo", "cantidad", "precio_unitario", "descuento_1", "descuento_2", "descuento_3"]
         widgets = {
             "presupuesto": forms.Select(attrs={"class": "form-select"}),
             "articulo": forms.Select(attrs={"class": "form-select"}),
@@ -557,4 +600,17 @@ class NotaCreditoForm(forms.ModelForm):
             self.add_error("monto", "El monto supera el saldo pendiente.")
         if motivo is not None and not motivo.strip():
             self.add_error("motivo", "Indique el motivo de la nota de crédito.")
+        return cleaned
+
+class PrecioArticuloForm(forms.ModelForm):
+    class Meta:
+        model = PrecioArticulo
+        fields = ['articulo', 'precio_compra', 'precio_lista']
+        labels = {'articulo': 'Artículo', 'precio_compra': 'Precio de compra (CLP)', 'precio_lista': 'Precio de lista (CLP)'}
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get('precio_compra') is not None and cleaned.get('precio_lista') is not None:
+            from .calculos import margen_sobre_venta
+            margen_sobre_venta(cleaned['precio_compra'], cleaned['precio_lista'])
         return cleaned

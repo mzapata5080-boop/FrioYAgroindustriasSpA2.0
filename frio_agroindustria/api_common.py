@@ -80,12 +80,15 @@ def serialize(obj):
         d['categoria_id'] = obj.categoria_id
         d['categoria_nombre'] = obj.categoria.nombre if obj.categoria else '—'
         d['unidad_medida_display'] = obj.get_unidad_medida_display()
+    if isinstance(obj, (FacturaCompra, Presupuesto)):
+        d['calcular_totales'] = obj.calculo_activo
+        d['totales'] = obj.calculo_comercial
     if isinstance(obj,FacturaCompra):
         d['proveedor_nombre'] = str(obj.proveedor)
-        details = list(obj.detalles.all())
+        details = list(obj.detalles.order_by('pk'))
         d['detalle_count'] = len(details)
         d['detalles_bloqueados'] = (
-            bool(obj.recepciones_compra.all())
+            obj.confirmada or bool(obj.recepciones_compra.all())
             or RecepcionIngreso.objects.filter(factura=obj).exists()
             or any(detail.recepciones.all() for detail in details)
         )
@@ -95,6 +98,8 @@ def serialize(obj):
             'articulo_nombre': str(detail.articulo),
             'cantidad': str(detail.cantidad),
             'precio_unitario': str(detail.precio_unitario),
+            **{f'descuento_{n}': str(getattr(detail, f'descuento_{n}')) for n in (1,2,3)},
+            'precio_lista': str(detail.precio_lista) if detail.precio_lista is not None else '',
         } for detail in details]
         if not d['detalles']:
             d['detalles'] = [{
@@ -116,8 +121,9 @@ def serialize(obj):
                 'articulo_nombre': str(detalle.articulo),
                 'cantidad': str(detalle.cantidad),
                 'precio_unitario': str(detalle.precio_unitario),
+                **{f'descuento_{n}': str(getattr(detalle, f'descuento_{n}')) for n in (1,2,3)},
                 'subtotal': str(detalle.subtotal),
-            } for detalle in obj.detalles.select_related('articulo')],
+            } for detalle in obj.detalles.select_related('articulo').order_by('pk')],
         )
     if isinstance(obj, PresupuestoDetalle):
         d.update(

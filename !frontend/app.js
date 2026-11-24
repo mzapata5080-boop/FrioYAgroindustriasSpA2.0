@@ -6,6 +6,7 @@ const names = {
   clientes: 'Clientes',
   proveedores: 'Proveedores',
   facturas: 'Facturas de compra',
+  precios: 'Precios e historial',
   'presupuestos-venta': 'Presupuestos de venta',
   'detalles-presupuesto': 'Artículos de presupuestos',
   'documentos-venta': 'Documentos de venta',
@@ -132,7 +133,7 @@ async function api(path, payload) {
 $('back').onclick = goHome;
 $('home').onclick = event => { event.preventDefault(); if (user) goHome(); };
 
-const hiddenColumns = new Set([
+const hiddenColumns = new Set(['totales', 'calculo_activo', 'calcular_totales', 'confirmada',
   'password', 'solicitud_id', 'solicitud_salida', 'categoria_id',
   'detalles', 'detalles_fifo', 'detalle_fifo_estado',
   'recepcion_id', 'detalle_factura_id',
@@ -335,6 +336,9 @@ async function load(resource) {
   }
 
   const items = metadata.items || [];
+  if (['facturas', 'presupuestos-venta'].includes(resource) && typeof renderSavedCommercial === 'function') {
+    renderSavedCommercial(items, container);
+  }
   renderFinanceSummary(resource, items, container);
   const userRole = ((user && user.rol) || '').toLowerCase();
   const isBodegaOrGerencia = !!(user && (user.is_superuser || userRole.includes('bodega') || userRole.includes('gerencia')));
@@ -398,6 +402,9 @@ async function load(resource) {
       stock_minimo: 'Stock mínimo',
       activo: 'Estado'
     };
+  } else if (resource === 'precios') {
+    keys = ['articulo_nombre', 'precio_compra', 'precio_lista', 'margen', 'fecha'];
+    labels = {articulo_nombre: 'Artículo', precio_compra: 'Compra (CLP)', precio_lista: 'Lista (CLP)', margen: 'Margen sobre venta (%)', fecha: 'Fecha de actualización'};
   } else if (resource === 'categorias') {
     keys = ['nombre', 'activo'];
     labels = { nombre: 'Nombre de la categoría', activo: 'Estado' };
@@ -654,6 +661,8 @@ async function load(resource) {
         actions.textContent = '—';
       }
       row.append(actions);
+    } else if (resource === 'precios' && metadata.can_write) {
+      row.append(node('td', 'Histórico: registra un precio nuevo para actualizar.'));
     } else if (resource === 'presupuestos-venta') {
       const actions = node('td');
       if (metadata.can_write) {
@@ -706,7 +715,21 @@ async function load(resource) {
           notice(e.message, true);
         }
       };
-      actions.append(b);
+      if (resource === 'facturas' && item.calcular_totales && !item.confirmada && !item.detalles_bloqueados) {
+        const confirmButton = node('button', 'Confirmar compra', 'btn btn-sm btn-success ms-2');
+        confirmButton.onclick = async () => {
+          if (!confirm('¿Confirmar los totales y guardar los precios de lista indicados?')) return;
+          confirmButton.disabled = true;
+          try { await api(`facturas/${item.id}/confirmar/`, {}); await load('facturas'); notice('Compra confirmada.'); }
+          catch(e) { notice(e.message, true); confirmButton.disabled = false; }
+        };
+        actions.append(confirmButton);
+      }
+      if (resource === 'facturas' && item.confirmada) {
+        actions.append(node('span', 'Confirmada', 'badge bg-success'));
+      } else {
+        actions.append(b);
+      }
 
       if (['articulos', 'categorias'].includes(resource)) {
         const toggleBtn = node(

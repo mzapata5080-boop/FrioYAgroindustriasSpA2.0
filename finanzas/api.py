@@ -24,6 +24,11 @@ from .forms import (
     PagoDocumentoForm,
     NotaCreditoForm,
 )
+from .calculos import calcular_documento, margen_sobre_venta
+from .comercial import confirmar_compra, registrar_precio
+from .models import PrecioArticulo
+from .forms import PrecioArticuloForm
+from frio_agroindustria.api_common import schema
 
 FINANCE_RESOURCES = {
     'clientes': (Cliente, ClienteForm, ('finanzas', 'gerencia')),
@@ -40,6 +45,75 @@ FINANCE_RESOURCES = {
     ),
     'notas-credito': (NotaCredito, NotaCreditoForm, ('finanzas', 'gerencia')),
 }
+
+
+@require_http_methods(['POST'])
+def calculo_previo(request):
+    if not allowed(request.user, ('finanzas', 'gerencia')):
+        return error('No tienes permisos.', 403)
+    payload = data(request)
+    try:
+        if 'precio_compra' in payload or 'precio_lista' in payload:
+            return JsonResponse({'margen': margen_sobre_venta(payload.get('precio_compra'), payload.get('precio_lista'))})
+        resultado = calcular_documento(payload.get('detalles'), payload.get('descuento_general', '0'),
+            payload.get('descuento_pronto_pago', '0'), payload.get('tasa_iva', '19'))
+    except ValidationError as exc:
+        return _validation_response(exc)
+    return JsonResponse({'totales': resultado})
+
+
+@require_http_methods(['GET', 'POST'])
+def precios(request):
+    if not allowed(request.user, ('finanzas', 'gerencia', 'bodega')):
+        return error('No tienes permisos.', 403)
+    if request.method == 'GET':
+        qs = PrecioArticulo.objects.select_related('articulo')
+        if request.GET.get('articulo'):
+            if not request.GET['articulo'].isdigit():
+                return error('Artículo inválido.')
+            qs = qs.filter(articulo_id=request.GET['articulo'])
+        por_articulo = {}
+        for registro in qs:
+            grupo = por_articulo.setdefault(registro.articulo_id, [])
+            if len(grupo) < 3:
+                grupo.append({'id': registro.pk, 'articulo': registro.articulo_id,
+                    'articulo_nombre': str(registro.articulo), 'precio_compra': registro.precio_compra,
+                    'precio_lista': registro.precio_lista, 'margen': registro.margen, 'fecha': registro.fecha})
+        return JsonResponse({'items': [p for grupo in por_articulo.values() for p in grupo],
+            'fields': schema(PrecioArticuloForm()), 'can_write': allowed(request.user, ('finanzas', 'gerencia')),
+            'can_delete': False})
+    if not allowed(request.user, ('finanzas', 'gerencia')):
+        return error('No tienes permiso para actualizar precios.', 403)
+    form = PrecioArticuloForm(data(request))
+    if not form.is_valid():
+        return JsonResponse({'errors': form.errors}, status=400)
+    from frio_agroindustria.common import registrar_cambio
+    try:
+        with transaction.atomic():
+            registro = registrar_precio(articulo_id=form.cleaned_data['articulo'].pk,
+                precio_compra=form.cleaned_data['precio_compra'], precio_lista=form.cleaned_data['precio_lista'], usuario=request.user)
+            registrar_cambio(request.user, 'CREAR_PRECIO', registro)
+    except ValidationError as exc:
+        return _validation_response(exc)
+    return JsonResponse({'item': {'id': registro.pk, 'precio_compra': registro.precio_compra,
+        'precio_lista': registro.precio_lista, 'margen': registro.margen, 'fecha': registro.fecha}}, status=201)
+
+
+@require_http_methods(['POST'])
+def compra_confirmar(request, pk):
+    if not allowed(request.user, ('finanzas', 'gerencia')):
+        return error('No tienes permisos.', 403)
+    from frio_agroindustria.common import registrar_cambio
+    try:
+        with transaction.atomic():
+            factura, repetida = confirmar_compra(factura_id=pk, usuario=request.user)
+            if not repetida:
+                registrar_cambio(request.user, 'CONFIRMAR', factura)
+    except FacturaCompra.DoesNotExist:
+        return error('Factura no encontrada.', 404)
+    except ValidationError as exc:
+        return _validation_response(exc)
+    return JsonResponse({'item': serialize(factura), 'repeated': repetida})
 
 
 def _permission(user, codename):
@@ -124,6 +198,8 @@ def presupuesto_decision(request, pk):
             presupuesto = Presupuesto.objects.select_for_update().get(pk=pk)
             antes = snapshot_instance(presupuesto)
             if accion == "aprobar":
+                from .comercial import actualizar_totales
+                actualizar_totales(presupuesto)
                 presupuesto.aprobar(request.user)
             elif accion == "rechazar":
                 presupuesto.rechazar(request.user, payload.get("motivo", ""))

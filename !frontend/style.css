@@ -104,3 +104,9 @@ button:focus-visible,a:focus-visible,summary:focus-visible { outline:3px solid #
  .finance-summary-card { min-height:82px; padding:12px; }
  .finance-summary-value { font-size:1.1rem; }
 }
+
+/* Descuentos de compra: controles legibles y desplazamiento dentro de la tabla. */
+#editor:has(.invoice-entry-header) { max-width:100%; }
+.invoice-lines-table { min-width:1100px; }
+.invoice-lines-table input { min-width:75px; }
+.invoice-lines-table select { min-width:160px; }

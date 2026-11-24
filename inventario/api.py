@@ -325,6 +325,9 @@ def movements(request, resource):
             if previous_legacy:
                 return error('La solicitud ya fue usada con otros datos. Abre un ingreso nuevo.', 409)
 
+            factura_bloqueada = FacturaCompra.objects.select_for_update().get(pk=values['factura'].pk)
+            if factura_bloqueada.calculo_activo and not factura_bloqueada.confirmada:
+                return error('Finanzas debe confirmar los totales de la compra antes de recibirla.')
             recepcion_compra = RecepcionCompra.objects.create(
                 solicitud_id=values['solicitud_id'],
                 factura=values['factura'],

@@ -132,14 +132,14 @@ class FacturaCompraDetailsTests(TestCase):
         })
         self.assertTrue(form.is_valid(), form.errors)
 
-    def test_fractional_unit_price_is_rejected(self):
+    def test_fractional_unit_price_is_valid_for_decimal_pricing(self):
         form = FacturaCompraDetalleForm(data={
             'articulo': self.kg_article.pk,
             'cantidad': '1.25',
             'precio_unitario': '100.50'
         })
-        self.assertFalse(form.is_valid())
-        self.assertIn('precio_unitario', form.errors)
+        self.assertTrue(form.is_valid(), form.errors)
+        self.assertEqual(form.cleaned_data['precio_unitario'], Decimal('100.50'))
 
     def test_invoice_amount_must_be_positive(self):
         form = FacturaCompraForm(data={
@@ -172,7 +172,7 @@ class FacturaCompraDetailsTests(TestCase):
         self.assertEqual(schema_fields['monto']['step'], '1')
         self.assertEqual(
             FacturaCompraDetalleForm().fields['precio_unitario'].widget.attrs['step'],
-            '1'
+            '0.01'
         )
 
     def test_existing_fractional_invoice_amount_can_be_kept_unchanged(self):
@@ -272,8 +272,8 @@ class FacturaCompraDetailsTests(TestCase):
             'cantidad': '1.25',
             'precio_unitario': '100.75'
         }], existing_details=invoice.detalles.all())
-        self.assertIsNone(details)
-        self.assertIn('detalles.0.precio_unitario', errors)
+        self.assertEqual(errors, {})
+        self.assertEqual(details[0].precio_unitario, Decimal('100.75'))
 
 
 class NuevasFuncionesFinancierasTests(TestCase):

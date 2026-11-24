@@ -8,6 +8,9 @@ from finanzas import api as finanzas_api
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/session/', api.session),
+    path('api/calculo-comercial/', finanzas_api.calculo_previo),
+    path('api/precios/', finanzas_api.precios),
+    path('api/facturas/<int:pk>/confirmar/', finanzas_api.compra_confirmar),
     path('api/login/', api.sign_in),
     path('api/logout/', api.sign_out),
     path('api/obras/', obras_api.obras_collection),
