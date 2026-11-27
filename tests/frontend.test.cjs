@@ -10,6 +10,7 @@ class Element {
  append(...nodes){this.children.push(...nodes);}
  replaceChildren(...nodes){this.children=[...nodes];}
  setAttribute(key,value){this.attributes[key]=value;}
+ getAttribute(key){return this.attributes[key];}
  addEventListener(name,fn){(this.listeners[name]??=[]).push(fn);}
  dispatchEvent(event){this[`on${event.type}`]?.(event);for(const fn of this.listeners[event.type]||[])fn(event);}
  scrollIntoView(){}
@@ -34,6 +35,9 @@ function context(){
   notice:()=>{},api:async()=>({}),load:async()=>{}};
  vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../!frontend/forms.js'),'utf8'),ctx);
  return {ctx,nodes};
+}
+function descendants(element) {
+ return element.children.flatMap(child => [child, ...descendants(child)]);
 }
 const fields=[
  {name:'solicitud_id',label:'Solicitud',type:'hidden',required:true},
@@ -348,14 +352,25 @@ test('bodega ve botones de inventario, ingresos, salidas y categorías pero no f
   assert.ok(whButtons.includes('Categorías'));
   assert.ok(whButtons.includes('Solicitudes de obra'));
 
-  const navTabs = nodes['modules'].children.map(b => b.textContent);
-  assert.ok(navTabs.includes('Inventario'));
-  assert.ok(navTabs.includes('Categorías'));
-  assert.ok(navTabs.includes('Ingresos de bodega'));
-  assert.ok(navTabs.includes('Salidas de bodega'));
-  assert.ok(navTabs.includes('Solicitudes de materiales'));
-  assert.ok(!navTabs.includes('Trabajadores'));
-  assert.ok(!navTabs.includes('Facturas de compra'));
+  const navLinks = descendants(nodes['modules']).filter(b => b.dataset.resource);
+  const navResources = navLinks.map(b => b.dataset.resource);
+  assert.ok(navResources.includes('articulos'));
+  assert.ok(navResources.includes('categorias'));
+  assert.ok(navResources.includes('ingresos'));
+  assert.ok(navResources.includes('salidas'));
+  assert.ok(navResources.includes('solicitudes'));
+  assert.ok(!navResources.includes('trabajadores'));
+  assert.ok(!navResources.includes('facturas'));
+
+  const inventory = nodes['modules'].children.find(section =>
+    section.children[0].text.includes('Inventario'));
+  const groupToggle = inventory.children[0];
+  const submenu = inventory.children[1];
+  assert.equal(submenu.hidden, true);
+  groupToggle.onclick();
+  assert.equal(submenu.hidden, false);
+  groupToggle.onclick();
+  assert.equal(submenu.hidden, true);
 });
 
 test('supervisor de obra ve tarjeta de supervisión y solicitudes sin permisos de bodega ni finanzas', () => {
@@ -366,12 +381,14 @@ test('supervisor de obra ve tarjeta de supervisión y solicitudes sin permisos d
   assert.ok(roleCards.includes('Mis Obras'));
   assert.ok(roleCards.includes('Mis solicitudes'));
 
-  const navTabs = nodes['modules'].children.map(b => b.dataset.resource);
-  assert.ok(navTabs.includes('obras'));
-  assert.ok(navTabs.includes('presupuestos'));
-  assert.ok(navTabs.includes('solicitudes'));
-  assert.ok(!navTabs.includes('salidas'));
-  assert.ok(!navTabs.includes('facturas'));
+  const navResources = descendants(nodes['modules'])
+    .filter(b => b.dataset.resource)
+    .map(b => b.dataset.resource);
+  assert.ok(navResources.includes('obras'));
+  assert.ok(navResources.includes('presupuestos'));
+  assert.ok(navResources.includes('solicitudes'));
+  assert.ok(!navResources.includes('salidas'));
+  assert.ok(!navResources.includes('facturas'));
 });
 
 test('facturas permiten agregar y enviar varios artículos en una sola operación', async () => {

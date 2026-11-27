@@ -107,39 +107,107 @@ function financeStatusBadge(status) {
   return node('span', label, `badge finance-status ${style}`);
 }
 
+const activeToasts = new Set();
+let loadingRequests = 0;
+const buttonDisabledStates = new Map();
+
+function notify(message, type = 'success') {
+  const styles = {
+    success: ['bi-check-circle-fill', 'Éxito'],
+    warning: ['bi-exclamation-triangle-fill', 'Atención'],
+    error: ['bi-x-circle-fill', 'Error'],
+    info: ['bi-info-circle-fill', 'Información']
+  };
+  const [iconName, label] = styles[type] || styles.info;
+  const toast = node('div', undefined, `app-toast toast-${type}`);
+  toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  const icon = node('i', undefined, `bi ${iconName} toast-icon`);
+  icon.setAttribute('aria-hidden', 'true');
+  const content = node('span', message, 'toast-message');
+  const close = node('button', undefined, 'btn-close toast-close');
+  close.type = 'button';
+  close.setAttribute('aria-label', `Cerrar notificación: ${label}`);
+  close.onclick = () => dismissToast(toast);
+  toast.append(icon, content, close);
+  $('toast-container').append(toast);
+  activeToasts.add(toast);
+  window.requestAnimationFrame(() => toast.classList.add('toast-visible'));
+  window.setTimeout(() => dismissToast(toast), 5000);
+}
+
+function dismissToast(toast) {
+  if (!activeToasts.has(toast)) return;
+  toast.classList.remove('toast-visible');
+  window.setTimeout(() => {
+    toast.remove();
+    activeToasts.delete(toast);
+  }, 220);
+}
+
 function notice(message, bad = false) {
-  const n = node('div', message, `alert alert-${bad ? 'danger' : 'success'}`);
-  $('notice').replaceChildren(n);
+  notify(message, bad ? 'error' : 'success');
+}
+
+function beginGlobalLoading() {
+  loadingRequests++;
+  if (loadingRequests !== 1) return;
+  const overlay = $('global-loading');
+  overlay.hidden = false;
+  overlay.setAttribute('aria-hidden', 'false');
+  document.body.classList.add('is-loading');
+  document.querySelectorAll('button').forEach(button => {
+    buttonDisabledStates.set(button, button.disabled);
+    button.disabled = true;
+  });
+}
+
+function endGlobalLoading() {
+  loadingRequests = Math.max(0, loadingRequests - 1);
+  if (loadingRequests !== 0) return;
+  const overlay = $('global-loading');
+  overlay.hidden = true;
+  overlay.setAttribute('aria-hidden', 'true');
+  document.body.classList.remove('is-loading');
+  buttonDisabledStates.forEach((disabled, button) => {
+    if (button.isConnected) button.disabled = disabled;
+  });
+  buttonDisabledStates.clear();
 }
 
 async function api(path, payload) {
-  const multipart = payload instanceof FormData;
-  const response = await fetch(`${window.API_BASE}/${path}`, {
-    method: payload === undefined ? 'GET' : 'POST',
-    credentials: 'include',
-    headers: payload === undefined ? {} : multipart
-      ? { 'X-CSRFToken': csrf }
-      : { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-    body: payload === undefined ? undefined : multipart ? payload : JSON.stringify(payload)
-  });
-  const body = await response.json().catch(() => ({
-    error: response.status >= 500
-      ? 'Ha ocurrido un error, intente nuevamente'
-      : response.status === 403
-      ? 'No posee permisos para acceder'
-      : response.status === 401
-      ? 'Su sesión ha expirado'
-      : `Respuesta inesperada (${response.status}). Comprueba el backend y la configuración CSRF.`
-  }));
-  if (!response.ok) {
-    if (response.status === 401) { user = null; renderSession(); }
-    const message = response.status >= 500
-      ? 'Ha ocurrido un error, intente nuevamente'
-      : body.error || Object.entries(body.errors || {})
-      .map(([k, v]) => `${k}: ${v.join(' ')}`).join('\n') || 'No se pudo completar la operación.';
-    throw new Error(message);
+  const showLoader = !path.startsWith('calculo-comercial/');
+  if (showLoader) beginGlobalLoading();
+  try {
+    const multipart = payload instanceof FormData;
+    const response = await fetch(`${window.API_BASE}/${path}`, {
+      method: payload === undefined ? 'GET' : 'POST',
+      credentials: 'include',
+      headers: payload === undefined ? {} : multipart
+        ? { 'X-CSRFToken': csrf }
+        : { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+      body: payload === undefined ? undefined : multipart ? payload : JSON.stringify(payload)
+    });
+    const body = await response.json().catch(() => ({
+      error: response.status >= 500
+        ? 'Ha ocurrido un error, intente nuevamente'
+        : response.status === 403
+        ? 'No posee permisos para acceder'
+        : response.status === 401
+        ? 'Su sesión ha expirado'
+        : `Respuesta inesperada (${response.status}). Comprueba el backend y la configuración CSRF.`
+    }));
+    if (!response.ok) {
+      if (response.status === 401) { user = null; renderSession(); }
+      const message = response.status >= 500
+        ? 'Ha ocurrido un error, intente nuevamente'
+        : body.error || Object.entries(body.errors || {})
+        .map(([k, v]) => `${k}: ${v.join(' ')}`).join('\n') || 'No se pudo completar la operación.';
+      throw new Error(message);
+    }
+    return body;
+  } finally {
+    if (showLoader) endGlobalLoading();
   }
-  return body;
 }
 
 function canExportResource(resource) {
@@ -163,44 +231,51 @@ function canExportResource(resource) {
 }
 
 async function exportReport(resource, fileFormat, keys, labels) {
-  const params = new URLSearchParams(
-    Object.entries(activeFilters[resource] || {})
-      .filter(([, value]) => value !== '' && value !== null && value !== undefined)
-  );
-  params.set('q', activeSearch[resource] || '');
-  params.set('columns', JSON.stringify(keys.map(key => ({
-    key,
-    label: labels[key] || key.replaceAll('_', ' ').replace(/^./, char => char.toUpperCase())
-  }))));
-  const response = await fetch(
-    `${window.API_BASE}/reportes/${resource}/${fileFormat}/?${params.toString()}`,
-    { method: 'GET', credentials: 'include' }
-  );
-  if (!response.ok) {
-    let body = {};
-    try { body = await response.json(); } catch (_) {}
-    if (response.status === 401) {
-      user = null;
-      renderSession();
+  beginGlobalLoading();
+  notify(`Generando reporte ${fileFormat === 'pdf' ? 'PDF' : 'Excel'}.`, 'warning');
+  try {
+    const params = new URLSearchParams(
+      Object.entries(activeFilters[resource] || {})
+        .filter(([, value]) => value !== '' && value !== null && value !== undefined)
+    );
+    params.set('q', activeSearch[resource] || '');
+    params.set('columns', JSON.stringify(keys.map(key => ({
+      key,
+      label: labels[key] || key.replaceAll('_', ' ').replace(/^./, char => char.toUpperCase())
+    }))));
+    const response = await fetch(
+      `${window.API_BASE}/reportes/${resource}/${fileFormat}/?${params.toString()}`,
+      { method: 'GET', credentials: 'include' }
+    );
+    if (!response.ok) {
+      let body = {};
+      try { body = await response.json(); } catch (_) {}
+      if (response.status === 401) {
+        user = null;
+        renderSession();
+      }
+      const message = response.status >= 500
+        ? 'Ha ocurrido un error, intente nuevamente'
+        : response.status === 403
+        ? 'No posee permisos para acceder'
+        : response.status === 401
+        ? 'Su sesión ha expirado'
+        : body.error || 'No se pudo generar el reporte.';
+      throw new Error(message);
     }
-    const message = response.status >= 500
-      ? 'Ha ocurrido un error, intente nuevamente'
-      : response.status === 403
-      ? 'No posee permisos para acceder'
-      : response.status === 401
-      ? 'Su sesión ha expirado'
-      : body.error || 'No se pudo generar el reporte.';
-    throw new Error(message);
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = node('a');
+    link.href = url;
+    link.download = `${resource}.${fileFormat === 'pdf' ? 'pdf' : 'xlsx'}`;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    notify(`Reporte ${fileFormat === 'pdf' ? 'PDF' : 'Excel'} descargado correctamente.`, 'success');
+  } finally {
+    endGlobalLoading();
   }
-  const blob = await response.blob();
-  const url = URL.createObjectURL(blob);
-  const link = node('a');
-  link.href = url;
-  link.download = `${resource}.${fileFormat === 'pdf' ? 'pdf' : 'xlsx'}`;
-  document.body.append(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
 }
 
 $('back').onclick = goHome;
@@ -380,7 +455,7 @@ async function openDocumentoPagos(documento) {
   }
 }
 
-async function load(resource, filters = activeFilters[resource] || {}) {
+async function load(resource, filters = activeFilters[resource] || {}, exportFormat = '') {
   const version = ++loadVersion;
   activeFilters[resource] = { ...filters };
   const query = new URLSearchParams(
@@ -396,12 +471,13 @@ async function load(resource, filters = activeFilters[resource] || {}) {
   $('dashboard').hidden = true;
   $('module-view').hidden = false;
 
-  for (const button of $('modules').children) {
+  $('modules').querySelectorAll('[data-resource]').forEach(button => {
     const active = button.dataset.resource === resource;
     button.classList.toggle('active', active);
     if (active) button.setAttribute('aria-current', 'page');
     else button.removeAttribute('aria-current');
-  }
+  });
+  if (typeof setSidebarActive === 'function') setSidebarActive(resource);
 
   $('section-title').textContent = names[resource] || resource;
 
@@ -708,6 +784,7 @@ async function load(resource, filters = activeFilters[resource] || {}) {
 
   if (!items.length) {
     container.append(node('p', resource === 'solicitudes' ? 'No hay solicitudes registradas.' : 'No hay registros.', 'text-muted'));
+    if (exportFormat) await exportReport(resource, exportFormat, keys, labels);
     return;
   }
 
@@ -740,6 +817,8 @@ async function load(resource, filters = activeFilters[resource] || {}) {
         td.append(badge);
       } else if (resource === 'presupuestos-venta' && k === 'estado') {
         td.append(financeStatusBadge(item.estado));
+      } else if (k === 'estado') {
+        td.append(statusBadge(item.estado));
       } else if (resource === 'documentos-venta' && k === 'anulado') {
         const estado = item.anulado
           ? ['Anulado', 'bg-danger']
@@ -954,6 +1033,28 @@ async function load(resource, filters = activeFilters[resource] || {}) {
     applyFilter();
   };
   if (statusSelect) statusSelect.onchange = applyFilter;
+  if (exportFormat) await exportReport(resource, exportFormat, keys, labels);
+}
+
+function statusBadge(status) {
+  const value = String(status || '').toUpperCase();
+  const styles = {
+    ACTIVO: ['Activo', 'bg-success'],
+    ACTIVA: ['Activa', 'bg-success'],
+    APROBADO: ['Aprobado', 'bg-success'],
+    APROBADA: ['Aprobada', 'bg-success'],
+    COMPLETADO: ['Completado', 'bg-success'],
+    COMPLETADA: ['Completada', 'bg-success'],
+    PENDIENTE: ['Pendiente', 'bg-warning text-dark'],
+    PARCIAL: ['Parcial', 'bg-warning text-dark'],
+    BORRADOR: ['Borrador', 'bg-warning text-dark'],
+    RECHAZADO: ['Rechazado', 'bg-danger'],
+    RECHAZADA: ['Rechazada', 'bg-danger'],
+    ANULADO: ['Anulado', 'bg-danger'],
+    ANULADA: ['Anulada', 'bg-danger']
+  };
+  const [label, style] = styles[value] || [status || 'Sin estado', 'bg-secondary'];
+  return node('span', label, `badge ${style}`);
 }
 
 $('new').onclick = () => showForm(metadata.fields);

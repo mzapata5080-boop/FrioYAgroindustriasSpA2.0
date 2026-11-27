@@ -691,7 +691,9 @@ function showForm(fields, item = {}) {
     await load(resource);
     notice(resource === 'notas-credito'
      ? `Nota de crédito ${result.item?.numero_documento || ''} creada correctamente.`
-     : 'Registro guardado.');
+     : resource === 'clientes'
+     ? 'Cliente guardado correctamente.'
+     : 'Registro guardado correctamente.');
    }
   } catch (e) {
    notice(e.message, true);
