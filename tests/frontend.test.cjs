@@ -33,7 +33,7 @@ function context(){
   },
   $:id=>nodes[id],node:(tag,text,cls)=>{const n=new Element(tag);if(text!==undefined)n.textContent=text;n.className=cls;return n;},
   notice:()=>{},api:async()=>({}),load:async()=>{}};
- vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../!frontend/forms.js'),'utf8'),ctx);
+ vm.createContext(ctx);vm.runInContext(fs.readFileSync(path.join(__dirname,'../frontend/js/forms.js'),'utf8'),ctx);
  return {ctx,nodes};
 }
 function descendants(element) {
@@ -189,7 +189,7 @@ function outputContext() {
     load: async () => {}
   };
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '../!frontend/forms.js'), 'utf8'), ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../frontend/js/forms.js'), 'utf8'), ctx);
   return { ctx, nodes };
 }
 
@@ -321,7 +321,8 @@ function dashboardContext(user) {
     user,
     names: {
       trabajadores: 'Trabajadores', clientes: 'Clientes', proveedores: 'Proveedores',
-      facturas: 'Facturas de compra', articulos: 'Inventario', categorias: 'Categorías',
+      facturas: 'Facturas de compra', precios: 'Precios e historial',
+      articulos: 'Inventario', categorias: 'Categorías',
       ingresos: 'Ingresos de bodega', salidas: 'Salidas de bodega', kardex: 'Kardex',
       obras: 'Obras', presupuestos: 'Presupuestos',
       solicitudes: 'Solicitudes de materiales'
@@ -338,11 +339,13 @@ function dashboardContext(user) {
     loadVersion: 0
   };
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '../!frontend/dashboard.js'), 'utf8'), ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../frontend/js/sidebar.js'), 'utf8'), ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../frontend/js/reports.js'), 'utf8'), ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../frontend/js/dashboard.js'), 'utf8'), ctx);
   return { ctx, nodes };
 }
 
-test('bodega ve botones de inventario, ingresos, salidas y categorías pero no finanzas ni personal', () => {
+test('bodega ve inventario, precios de consulta, ingresos y categorías sin otras opciones financieras', () => {
   const { ctx, nodes } = dashboardContext({ username: 'bodeguero', rol: 'bodega', name: 'Pedro Bodega', is_superuser: false });
   ctx.renderSession();
   const whButtons = nodes['warehouse-actions'].children.map(b => b.textContent);
@@ -358,9 +361,13 @@ test('bodega ve botones de inventario, ingresos, salidas y categorías pero no f
   assert.ok(navResources.includes('categorias'));
   assert.ok(navResources.includes('ingresos'));
   assert.ok(navResources.includes('salidas'));
+  assert.ok(navResources.includes('precios'));
   assert.ok(navResources.includes('solicitudes'));
+  assert.ok(navResources.includes('operaciones'));
   assert.ok(!navResources.includes('trabajadores'));
+  assert.ok(!navResources.includes('clientes'));
   assert.ok(!navResources.includes('facturas'));
+  assert.equal(nodes.welcome.textContent, 'Bienvenido, Pedro Bodega');
 
   const inventory = nodes['modules'].children.find(section =>
     section.children[0].text.includes('Inventario'));
@@ -389,6 +396,21 @@ test('supervisor de obra ve tarjeta de supervisión y solicitudes sin permisos d
   assert.ok(navResources.includes('solicitudes'));
   assert.ok(!navResources.includes('salidas'));
   assert.ok(!navResources.includes('facturas'));
+  assert.ok(!navResources.includes('operaciones'));
+});
+
+test('diagnóstico frontend usa console.error con recurso, endpoint sin query y estado HTTP', () => {
+  const entries = [];
+  const ctx = { console: { error: (...args) => entries.push(args) } };
+  vm.createContext(ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../frontend/js/reports.js'), 'utf8'), ctx);
+  ctx.logFrontendRequestFailure('articulos', 'http://localhost:8000/api/articulos/?q=privado', 500);
+  assert.equal(entries.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(entries[0])), [
+    'articulos',
+    'http://localhost:8000/api/articulos/',
+    500
+  ]);
 });
 
 test('facturas permiten agregar y enviar varios artículos en una sola operación', async () => {
@@ -420,7 +442,7 @@ test('facturas permiten agregar y enviar varios artículos en una sola operació
     load: async () => {}
   };
   vm.createContext(ctx);
-  vm.runInContext(fs.readFileSync(path.join(__dirname, '../!frontend/forms.js'), 'utf8'), ctx);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../frontend/js/forms.js'), 'utf8'), ctx);
 
   ctx.showForm([
     { name: 'numero_documento', label: 'Documento', type: 'text', required: true },

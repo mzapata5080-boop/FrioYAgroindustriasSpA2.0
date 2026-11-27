@@ -179,14 +179,23 @@ async function api(path, payload) {
   if (showLoader) beginGlobalLoading();
   try {
     const multipart = payload instanceof FormData;
-    const response = await fetch(`${window.API_BASE}/${path}`, {
-      method: payload === undefined ? 'GET' : 'POST',
-      credentials: 'include',
-      headers: payload === undefined ? {} : multipart
-        ? { 'X-CSRFToken': csrf }
-        : { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
-      body: payload === undefined ? undefined : multipart ? payload : JSON.stringify(payload)
-    });
+    const endpoint = `${window.API_BASE}/${path}`;
+    const resource = String(path).split('?')[0].split('/').filter(Boolean)[0] || 'desconocido';
+    let response;
+    try {
+      response = await fetch(endpoint, {
+        method: payload === undefined ? 'GET' : 'POST',
+        credentials: 'include',
+        headers: payload === undefined ? {} : multipart
+          ? { 'X-CSRFToken': csrf }
+          : { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+        body: payload === undefined ? undefined : multipart ? payload : JSON.stringify(payload)
+      });
+    } catch (error) {
+      logFrontendRequestFailure(resource, endpoint, null);
+      throw error;
+    }
+    if (!response.ok) logFrontendRequestFailure(resource, endpoint, response.status);
     const body = await response.json().catch(() => ({
       error: response.status >= 500
         ? 'Ha ocurrido un error, intente nuevamente'
@@ -207,74 +216,6 @@ async function api(path, payload) {
     return body;
   } finally {
     if (showLoader) endGlobalLoading();
-  }
-}
-
-function canExportResource(resource) {
-  if (!user) return false;
-  if (user.is_superuser) return true;
-  const role = (user.rol || '').toLowerCase();
-  if (resource === 'articulos') return true;
-  if (['clientes', 'proveedores', 'facturas'].includes(resource)) {
-    return role.includes('finanzas') || role.includes('gerencia');
-  }
-  if (resource === 'kardex') return role.includes('gerencia');
-  if (resource === 'obras') {
-    return ['gerencia', 'bodega', 'finanzas', 'supervisor', 'obras']
-      .some(name => role.includes(name));
-  }
-  if (resource === 'solicitudes') {
-    return ['gerencia', 'bodega', 'supervisor', 'obras']
-      .some(name => role.includes(name));
-  }
-  return false;
-}
-
-async function exportReport(resource, fileFormat, keys, labels) {
-  beginGlobalLoading();
-  notify(`Generando reporte ${fileFormat === 'pdf' ? 'PDF' : 'Excel'}.`, 'warning');
-  try {
-    const params = new URLSearchParams(
-      Object.entries(activeFilters[resource] || {})
-        .filter(([, value]) => value !== '' && value !== null && value !== undefined)
-    );
-    params.set('q', activeSearch[resource] || '');
-    params.set('columns', JSON.stringify(keys.map(key => ({
-      key,
-      label: labels[key] || key.replaceAll('_', ' ').replace(/^./, char => char.toUpperCase())
-    }))));
-    const response = await fetch(
-      `${window.API_BASE}/reportes/${resource}/${fileFormat}/?${params.toString()}`,
-      { method: 'GET', credentials: 'include' }
-    );
-    if (!response.ok) {
-      let body = {};
-      try { body = await response.json(); } catch (_) {}
-      if (response.status === 401) {
-        user = null;
-        renderSession();
-      }
-      const message = response.status >= 500
-        ? 'Ha ocurrido un error, intente nuevamente'
-        : response.status === 403
-        ? 'No posee permisos para acceder'
-        : response.status === 401
-        ? 'Su sesión ha expirado'
-        : body.error || 'No se pudo generar el reporte.';
-      throw new Error(message);
-    }
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = node('a');
-    link.href = url;
-    link.download = `${resource}.${fileFormat === 'pdf' ? 'pdf' : 'xlsx'}`;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    notify(`Reporte ${fileFormat === 'pdf' ? 'PDF' : 'Excel'} descargado correctamente.`, 'success');
-  } finally {
-    endGlobalLoading();
   }
 }
 
