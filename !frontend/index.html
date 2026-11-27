@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Frío y Agroindustria SpA</title>
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-  <link rel="stylesheet" href="style.css?v=comercial-1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="style.css?v=dashboard-1">
   <script src="config.js"></script>
-  <script src="dashboard.js?v=3" defer></script>
+  <script src="dashboard.js?v=4" defer></script>
   <script src="forms.js?v=comercial-1" defer></script>
   <script src="comercial.js?v=1" defer></script>
-  <script src="app.js?v=comercial-1" defer></script>
+  <script src="app.js?v=dashboard-1" defer></script>
   <script src="operaciones.js?v=1" defer></script>
 </head>
 <body>
@@ -19,6 +20,16 @@
       <a id="home" class="site-brand" href="#">Frío y Agroindustria SpA</a>
       <div class="session-actions">
         <span id="identity"></span>
+        <div id="alerts-menu" class="alerts-menu" hidden>
+          <button id="alerts-toggle" class="btn btn-outline-light alerts-toggle" type="button" aria-expanded="false" aria-controls="alerts-panel" aria-label="Alertas">
+            <i class="bi bi-bell" aria-hidden="true"></i>
+            <span id="alert-count" class="alert-counter" hidden>0</span>
+          </button>
+          <section id="alerts-panel" class="alerts-panel" hidden aria-label="Alertas internas">
+            <h2 class="h6">Alertas internas</h2>
+            <div id="alert-groups"></div>
+          </section>
+        </div>
         <button id="logout" class="btn btn-outline-light" hidden>Cerrar Sesión</button>
       </div>
     </div>
@@ -41,6 +52,7 @@
           <h1 id="welcome">Bienvenido,</h1>
           <p>Panel de control (Sprint 1). Sus funciones están habilitadas según su rol en la empresa.</p>
         </div>
+        <section id="manager-dashboard" class="manager-dashboard" hidden aria-label="Dashboard de gerencia"></section>
         <div id="role-cards" class="role-grid"></div>
         <section class="card warehouse-card" aria-labelledby="warehouse-title">
           <h2 id="warehouse-title">Bodega</h2>

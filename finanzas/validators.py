@@ -1,6 +1,19 @@
 import re
 from django.core.exceptions import ValidationError
 
+
+def formatear_rut_chileno(value):
+    rut = str(value).replace(".", "").replace("-", "").upper().strip()
+    if not rut:
+        return ""
+    cuerpo, dv = rut[:-1], rut[-1]
+    partes = []
+    while cuerpo:
+        partes.insert(0, cuerpo[-3:])
+        cuerpo = cuerpo[:-3]
+    return ".".join(partes) + "-" + dv
+
+
 def validar_rut_chileno(value):
     rut = str(value).upper().replace(".", "").replace("-", "").strip()
     if not re.match(r"^\d{7,8}[0-9K]$", rut):

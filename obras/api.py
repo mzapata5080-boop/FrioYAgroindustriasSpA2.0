@@ -3,7 +3,9 @@ from django.db.models import Q
 from django.http import JsonResponse, FileResponse
 from django.shortcuts import get_object_or_404
 from django.views.decorators.http import require_http_methods, require_GET
-from frio_agroindustria.api_common import allowed, error, data, schema, serialize
+from frio_agroindustria.api_common import (
+    allowed, error, data, schema, serialize, permission_denied,
+)
 from frio_agroindustria.common import (
     open_private_file,
     registrar_cambio,
@@ -15,6 +17,7 @@ from frio_agroindustria.models import ArchivoPrivado
 from inventario.models import Repuesto
 from obras.forms import ObraForm, PresupuestoForm, SolicitudMaterialForm
 from obras.models import Obra, Presupuesto, SolicitudMaterial
+from reportes.filters import FILTER_FIELDS, InvalidReportFilter, filter_queryset
 
 
 SUPERVISOR_ROLES = ('supervisor de obra', 'supervisor', 'obras')
@@ -104,21 +107,25 @@ def _filter_form_obras(form, user):
 def obras_collection(request):
     roles = ('gerencia', 'bodega', 'finanzas', *SUPERVISOR_ROLES)
     if not allowed(request.user, roles):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     can_write = allowed(request.user, ('gerencia', *SUPERVISOR_ROLES))
     if request.method == 'GET':
-        qs = obras_queryset_for(request.user)
+        try:
+            qs = filter_queryset('obras', obras_queryset_for(request.user), request.GET)
+        except InvalidReportFilter as exc:
+            return error(str(exc), 400)
         form = ObraForm()
         if is_supervisor_only(request.user):
             form.fields['supervisor'].initial = request.user.pk
         return JsonResponse({
             'items': [serialize_obra(o) for o in qs],
             'fields': schema(form),
+            'filter_fields': FILTER_FIELDS['obras'],
             'can_write': can_write,
             'can_delete': False,
         })
     if not can_write:
-        return error('No tienes permisos para crear obras.', 403)
+        return permission_denied()
     payload = data(request)
     if is_supervisor_only(request.user):
         payload['supervisor'] = request.user.pk
@@ -140,12 +147,12 @@ def obras_collection(request):
 def obra_detail(request, pk):
     roles = ('gerencia', 'bodega', 'finanzas', *SUPERVISOR_ROLES)
     if not allowed(request.user, roles):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     obra = Obra.objects.select_related('cliente', 'supervisor', 'creado_por').prefetch_related('tecnicos').filter(pk=pk).first()
     if obra is None:
         return error('Obra no encontrada.', 404)
     if not can_access_obra(request.user, obra):
-        return error('No tienes permisos para acceder a esta obra.', 403)
+        return permission_denied()
     if request.method == 'GET':
         docs = list(
             ArchivoPrivado.objects.filter(modelo='obras.obra', objeto_id=str(obra.pk)).values(
@@ -158,10 +165,10 @@ def obra_detail(request, pk):
             'documentos': docs,
         })
     if not allowed(request.user, ('gerencia', *SUPERVISOR_ROLES)):
-        return error('No tienes permisos para editar obras.', 403)
+        return permission_denied()
     payload = data(request)
     if is_supervisor_only(request.user) and obra.supervisor_id != request.user.pk:
-        return error('Solo el supervisor titular o gerencia puede editar esta obra.', 403)
+        return permission_denied()
     try:
         with transaction.atomic():
             obra_locked = Obra.objects.select_for_update().get(pk=pk)
@@ -181,7 +188,7 @@ def obra_detail(request, pk):
 def presupuestos_collection(request):
     roles = ('gerencia', 'finanzas', *SUPERVISOR_ROLES)
     if not allowed(request.user, roles):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     allowed_obras = obras_queryset_for(request.user)
     if request.method == 'GET':
         qs = (
@@ -214,7 +221,7 @@ def presupuestos_collection(request):
 def solicitudes_collection(request):
     roles = ('gerencia', 'bodega', *SUPERVISOR_ROLES)
     if not allowed(request.user, roles):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     allowed_obras = obras_queryset_for(request.user)
     if request.method == 'GET':
         qs = (
@@ -222,10 +229,15 @@ def solicitudes_collection(request):
             .filter(obra__in=allowed_obras)
             .order_by('-creado_el', '-pk')
         )
+        try:
+            qs = filter_queryset('solicitudes', qs, request.GET)
+        except InvalidReportFilter as exc:
+            return error(str(exc), 400)
         form = _filter_form_obras(SolicitudMaterialForm(), request.user)
         return JsonResponse({
             'items': [serialize_solicitud(s) for s in qs],
             'fields': schema(form),
+            'filter_fields': FILTER_FIELDS['solicitudes'],
             'can_write': allowed(request.user, ('gerencia', *SUPERVISOR_ROLES)),
             'can_delete': False,
             'articles': list(
@@ -235,7 +247,7 @@ def solicitudes_collection(request):
             ),
         })
     if not allowed(request.user, ('gerencia', *SUPERVISOR_ROLES)):
-        return error('No tienes permisos para solicitar materiales.', 403)
+        return permission_denied()
     form = _filter_form_obras(SolicitudMaterialForm(data(request)), request.user)
     if not form.is_valid():
         return JsonResponse({'errors': form.errors}, status=400)
@@ -252,7 +264,7 @@ def solicitud_detail(request, pk):
     """Gestiona consulta y transiciones de estado: aprobar (reservar), rechazar y cancelar (liberar)."""
     roles = ('gerencia', 'bodega', *SUPERVISOR_ROLES)
     if not allowed(request.user, roles):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     sol = (
         SolicitudMaterial.objects.select_related('obra__cliente', 'articulo', 'solicitado_por', 'aprobado_por')
         .filter(pk=pk)
@@ -261,7 +273,7 @@ def solicitud_detail(request, pk):
     if sol is None:
         return error('Solicitud no encontrada.', 404)
     if not can_access_obra(request.user, sol.obra):
-        return error('No tienes permisos para acceder a solicitudes de esta obra.', 403)
+        return permission_denied()
     if request.method == 'GET':
         return JsonResponse({'item': serialize_solicitud(sol), 'fields': []})
 
@@ -271,7 +283,7 @@ def solicitud_detail(request, pk):
         return error('Acción inválida. Usa aprobar, rechazar o cancelar.', 400)
 
     if accion in ('aprobar', 'rechazar') and not allowed(request.user, ('gerencia', 'bodega')):
-        return error('Solo Bodega o Gerencia puede aprobar o rechazar solicitudes.', 403)
+        return permission_denied()
 
     with transaction.atomic():
         sol_locked = SolicitudMaterial.objects.select_for_update().select_related('obra', 'articulo').get(pk=pk)
@@ -322,12 +334,12 @@ def obra_documentos(request, obra_pk):
     """Lista, sube y descarga documentos privados asociados a una Obra respetando permisos del supervisor."""
     roles = ('gerencia', 'bodega', 'finanzas', *SUPERVISOR_ROLES)
     if not allowed(request.user, roles):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     obra = Obra.objects.filter(pk=obra_pk).first()
     if obra is None:
         return error('Obra no encontrada.', 404)
     if not can_access_obra(request.user, obra):
-        return error('No tienes permisos para acceder a los documentos de esta obra.', 403)
+        return permission_denied()
 
     if request.method == 'GET':
         doc_id = request.GET.get('descargar')
@@ -377,7 +389,7 @@ def obra_documentos(request, obra_pk):
 def archivo_descargar(request, archivo_id):
     roles = ('gerencia', 'bodega', 'finanzas', *SUPERVISOR_ROLES)
     if not allowed(request.user, roles):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     archivo = get_object_or_404(
         ArchivoPrivado,
         pk=archivo_id,
@@ -386,6 +398,6 @@ def archivo_descargar(request, archivo_id):
     )
     obra = Obra.objects.filter(pk=archivo.objeto_id).first()
     if not obra or not can_access_obra(request.user, obra):
-        return error('No tienes acceso a este documento.', 403)
+        return permission_denied()
     fh = open_private_file(archivo.ruta_privada)
     return FileResponse(fh, as_attachment=True, filename=archivo.nombre_original)

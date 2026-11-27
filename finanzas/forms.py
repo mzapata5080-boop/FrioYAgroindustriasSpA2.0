@@ -2,6 +2,7 @@ from decimal import Decimal
 from django import forms
 from django.core.exceptions import ValidationError
 from django.forms.models import BaseInlineFormSet, inlineformset_factory
+from .validators import formatear_rut_chileno
 from .models import (
     Cliente,
     Proveedor,
@@ -41,7 +42,7 @@ class ClienteForm(forms.ModelForm):
         }
 
     def clean_rut(self):
-        rut = ProveedorForm().formatear_rut(self.cleaned_data.get('rut', ''))
+        rut = formatear_rut_chileno(self.cleaned_data.get('rut', ''))
 
         if Cliente.objects.filter(rut=rut)\
                 .exclude(pk=self.instance.pk)\
@@ -118,38 +119,24 @@ class ProveedorForm(forms.ModelForm):
         return rut_formateado
 
     def formatear_rut(self, rut):
-
-        rut = (
-            str(rut)
-            .replace(".", "")
-            .replace("-", "")
-            .upper()
-            .strip()
-        )
-
-        cuerpo = rut[:-1]
-        dv = rut[-1]
-        partes = []
-        while cuerpo:
-            partes.insert(0, cuerpo[-3:])
-            cuerpo = cuerpo[:-3]
-        return ".".join(partes) + "-" + dv
+        return formatear_rut_chileno(rut)
 
     def clean(self):
-
         cleaned = super().clean()
-
-        if not cleaned.get("banco"):
-            self.add_error(
-                "banco",
-                "Debe ingresar banco."
-            )
-
-        if not cleaned.get("numero_cuenta"):
-            self.add_error(
-                "numero_cuenta",
-                "Debe ingresar cuenta."
-            )
+        bank_fields = ("banco", "tipo_cuenta", "numero_cuenta")
+        bank_data_changed = not self.instance.pk or any(
+            cleaned.get(field) != getattr(self.instance, field)
+            for field in bank_fields
+        )
+        if bank_data_changed:
+            labels = {
+                "banco": "Debe ingresar banco.",
+                "tipo_cuenta": "Debe seleccionar tipo de cuenta.",
+                "numero_cuenta": "Debe ingresar cuenta.",
+            }
+            for field, message in labels.items():
+                if not cleaned.get(field):
+                    self.add_error(field, message)
 
         return cleaned
 

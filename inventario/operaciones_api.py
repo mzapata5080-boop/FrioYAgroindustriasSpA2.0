@@ -3,7 +3,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction, connection
 from django.http import JsonResponse, FileResponse
 from django.shortcuts import get_object_or_404
-from frio_agroindustria.api_common import allowed, data, error, schema
+from frio_agroindustria.api_common import allowed, data, error, schema, permission_denied
 from frio_agroindustria.common import save_private_file, open_private_file, private_storage, registrar_cambio
 from frio_agroindustria.models import ArchivoPrivado
 from inventario.models import (OperacionInventario, MovimientoOperacion, MovimientoBodega, Repuesto, RecepcionIngreso,)
@@ -17,7 +17,7 @@ def permitido(request):
     if not request.user.is_authenticated:
         return error('Inicia sesión.', 401)
     if not allowed(request.user, ('bodega', 'gerencia')):
-        return error('No tienes permiso para estas operaciones.', 403)
+        return permission_denied()
     return None
 
 
@@ -54,7 +54,7 @@ def operaciones(request):
         if not form.is_valid():
             return JsonResponse({'errors': form.errors}, status=400)
         if form.cleaned_data['tipo'] == 'ANULAR' and not (request.user.is_superuser or request.user.rol == 'gerencia'):
-            return error('Solo Gerencia puede autorizar anulaciones.', 403)
+            return permission_denied()
         try:
             op, repetida = registrar_operacion(form.cleaned_data, request.user)
         except ConflictoSolicitudFIFO as exc:

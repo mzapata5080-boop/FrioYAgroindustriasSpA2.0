@@ -6,7 +6,7 @@ def solo_finanzas(view_func):
     @wraps(view_func)
     def wrapper(request, *args, **kwargs):
         if request.user.rol != "finanzas":
-            raise PermissionDenied("No tienes permisos para acceder.")
+            raise PermissionDenied("No posee permisos para acceder")
         return view_func(
             request,
             *args,

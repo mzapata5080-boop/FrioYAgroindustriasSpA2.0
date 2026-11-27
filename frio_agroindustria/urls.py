@@ -4,6 +4,9 @@ from . import api
 from inventario import operaciones_api
 from obras import api as obras_api
 from finanzas import api as finanzas_api
+from reportes import api as reportes_api
+
+handler500 = 'frio_agroindustria.api.internal_error'
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -26,6 +29,9 @@ urlpatterns = [
     path('api/documentos-venta/<int:pk>/pagos/', finanzas_api.documento_pagos),
     path('api/presupuestos-venta/<int:pk>/decision/', finanzas_api.presupuesto_decision),
     path('api/documentos-venta/<int:pk>/anular/', finanzas_api.documento_anular),
+    path('api/dashboard/', reportes_api.dashboard),
+    path('api/alertas/', reportes_api.alerts),
+    path('api/reportes/<str:resource>/<str:file_format>/', reportes_api.export_report),
     path('api/<str:resource>/', api.collection),
     path('api/<str:resource>/<int:pk>/', api.detail),
 ]

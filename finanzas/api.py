@@ -3,7 +3,9 @@ from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.http import JsonResponse
 from django.views.decorators.http import require_http_methods
-from frio_agroindustria.api_common import allowed, data, error, serialize
+from frio_agroindustria.api_common import (
+    allowed, data, error, serialize, permission_denied,
+)
 from .models import (
     Cliente,
     Proveedor,
@@ -50,7 +52,7 @@ FINANCE_RESOURCES = {
 @require_http_methods(['POST'])
 def calculo_previo(request):
     if not allowed(request.user, ('finanzas', 'gerencia')):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     payload = data(request)
     try:
         if 'precio_compra' in payload or 'precio_lista' in payload:
@@ -65,7 +67,7 @@ def calculo_previo(request):
 @require_http_methods(['GET', 'POST'])
 def precios(request):
     if not allowed(request.user, ('finanzas', 'gerencia', 'bodega')):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     if request.method == 'GET':
         qs = PrecioArticulo.objects.select_related('articulo')
         if request.GET.get('articulo'):
@@ -83,7 +85,7 @@ def precios(request):
             'fields': schema(PrecioArticuloForm()), 'can_write': allowed(request.user, ('finanzas', 'gerencia')),
             'can_delete': False})
     if not allowed(request.user, ('finanzas', 'gerencia')):
-        return error('No tienes permiso para actualizar precios.', 403)
+        return permission_denied()
     form = PrecioArticuloForm(data(request))
     if not form.is_valid():
         return JsonResponse({'errors': form.errors}, status=400)
@@ -102,7 +104,7 @@ def precios(request):
 @require_http_methods(['POST'])
 def compra_confirmar(request, pk):
     if not allowed(request.user, ('finanzas', 'gerencia')):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     from frio_agroindustria.common import registrar_cambio
     try:
         with transaction.atomic():
@@ -136,7 +138,7 @@ def documento_pagos(request, pk):
     if not request.user.is_authenticated:
         return error("Inicia sesión.", 401)
     if not allowed(request.user, ("finanzas", "gerencia")):
-        return error("No tienes permisos.", 403)
+        return permission_denied()
     documento = DocumentoVenta.objects.filter(pk=pk).first()
     if documento is None:
         return error("Documento no encontrado.", 404)
@@ -154,7 +156,7 @@ def documento_pagos(request, pk):
         })
 
     if not _permission(request.user, "registrar_pago_documento"):
-        return error("No tienes permiso para registrar pagos.", 403)
+        return permission_denied()
     payload = data(request)
     payload["documento"] = documento.pk
     form = PagoDocumentoForm(payload)
@@ -184,7 +186,7 @@ def presupuesto_decision(request, pk):
     if not request.user.is_authenticated:
         return error("Inicia sesión.", 401)
     if not _permission(request.user, "aprobar_presupuesto"):
-        return error("No tienes permiso para aprobar o rechazar presupuestos.", 403)
+        return permission_denied()
     payload = data(request)
     accion = payload.get("accion")
     presupuesto = Presupuesto.objects.filter(pk=pk).first()
@@ -216,7 +218,7 @@ def documento_anular(request, pk):
     if not request.user.is_authenticated:
         return error("Inicia sesión.", 401)
     if not _permission(request.user, "anular_documento_venta"):
-        return error("No tienes permiso para anular documentos.", 403)
+        return permission_denied()
     payload = data(request)
     documento = DocumentoVenta.objects.filter(pk=pk).first()
     if documento is None:

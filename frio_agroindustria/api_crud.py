@@ -6,7 +6,9 @@ from django.http import JsonResponse
 from django.forms.models import model_to_dict
 from django.views.decorators.http import require_http_methods
 from usuarios.forms import TrabajadorEditarForm
-from frio_agroindustria.api_common import error, data, allowed, schema, serialize
+from frio_agroindustria.api_common import (
+    error, data, allowed, schema, serialize, permission_denied,
+)
 from frio_agroindustria.common import registrar_cambio, snapshot_instance
 from frio_agroindustria.api_resources import RESOURCES
 from inventario.api import movements
@@ -14,6 +16,7 @@ from inventario.models import Repuesto, RecepcionIngreso
 from finanzas.forms import FacturaCompraDetalleForm
 from finanzas.models import FacturaCompraDetalle, FacturaCompra, Presupuesto, PresupuestoDetalle
 from finanzas.comercial import actualizar_totales
+from reportes.filters import FILTER_FIELDS, InvalidReportFilter, filter_queryset
 
 
 def _resource_fields(resource, formclass, instance=None):
@@ -130,7 +133,7 @@ def collection(request, resource):
     model, formclass, roles = RESOURCES[resource]
     read_stock = resource == 'articulos' and request.method == 'GET'
     if not read_stock and not allowed(request.user, roles):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     if request.method == 'GET':
         qs = model.objects.order_by('pk')
         if resource == 'articulos':
@@ -141,9 +144,14 @@ def collection(request, resource):
                 'detalles__recepciones',
                 'recepciones_compra',
             )
+        try:
+            qs = filter_queryset(resource, qs, request.GET)
+        except InvalidReportFilter as exc:
+            return error(str(exc), 400)
         return JsonResponse({
             'items': [serialize(x) for x in qs],
             'fields': _resource_fields(resource, formclass),
+            'filter_fields': FILTER_FIELDS.get(resource, []),
             'can_write': allowed(request.user, roles),
             'can_delete': resource in ('clientes', 'trabajadores'),
             **_resource_permissions(resource, request.user),
@@ -201,7 +209,7 @@ def detail(request, resource, pk):
         return error('Recurso no encontrado.', 404)
     model, formclass, roles = RESOURCES[resource]
     if not allowed(request.user, roles):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     obj = model.objects.filter(pk=pk).first()
     if obj is None:
         return error('Registro no encontrado.', 404)
@@ -218,7 +226,7 @@ def detail(request, resource, pk):
     raw_details = d.pop('detalles', None) if resource == 'facturas' else None
     if d.pop('_delete', False):
         if resource not in ('clientes', 'trabajadores'):
-            return error('No se permite eliminar este tipo de registro.', 403)
+            return permission_denied()
         if resource == 'trabajadores' and obj.pk == request.user.pk:
             return error('No puedes eliminar tu propia cuenta.')
         antes = snapshot_instance(obj)

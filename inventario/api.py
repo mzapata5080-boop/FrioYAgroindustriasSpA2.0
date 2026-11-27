@@ -6,7 +6,9 @@ from django.db.models import DecimalField, Sum
 from django.db.models.functions import Coalesce
 from django.core.exceptions import ValidationError
 from django.http import JsonResponse
-from frio_agroindustria.api_common import allowed, error, data, schema, serialize as base_serialize
+from frio_agroindustria.api_common import (
+    allowed, error, data, schema, serialize as base_serialize, permission_denied,
+)
 from inventario.api_forms import IngresoForm, SalidaForm
 from inventario.fifo import registrar_salida_fifo, ConflictoSolicitudFIFO
 from inventario.models import MovimientoBodega, RecepcionIngreso, Repuesto
@@ -18,6 +20,11 @@ from finanzas.models import (
     RecepcionDetalle,
 )
 from obras.models import Obra, SolicitudMaterial
+from reportes.filters import (
+    FILTER_FIELDS,
+    InvalidReportFilter,
+    filter_kardex_items,
+)
 
 
 def serialize(movement):
@@ -225,7 +232,7 @@ def repeated_response(receipt, values, user):
 def movements(request, resource):
     roles = ('gerencia',) if resource == 'kardex' else ('bodega', 'gerencia')
     if not allowed(request.user, roles):
-        return error('No tienes permisos.', 403)
+        return permission_denied()
     if request.method == 'GET':
         qs = (
             MovimientoBodega.objects.select_related(
@@ -293,6 +300,11 @@ def movements(request, resource):
         if resource == 'kardex':
             from inventario.operaciones_api import enriquecer_kardex
             enriquecer_kardex(result['items'])
+            try:
+                result['items'] = filter_kardex_items(result['items'], request.GET)
+            except InvalidReportFilter as exc:
+                return error(str(exc), 400)
+        result['filter_fields'] = FILTER_FIELDS.get(resource, [])
 
         return JsonResponse(result)
 

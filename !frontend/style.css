@@ -110,3 +110,62 @@ button:focus-visible,a:focus-visible,summary:focus-visible { outline:3px solid #
 .invoice-lines-table { min-width:1100px; }
 .invoice-lines-table input { min-width:75px; }
 .invoice-lines-table select { min-width:160px; }
+
+.role-card { border-radius:16px; box-shadow:0 12px 30px rgb(15 23 42 / 9%); transition:transform .18s ease,box-shadow .18s ease; }
+.role-card:hover { transform:translateY(-3px); box-shadow:0 16px 34px rgb(15 23 42 / 14%); }
+.management-card { --primary:#9a3412; background:linear-gradient(145deg,#fff 55%,#fff7ed); border-color:#9a3412; }
+.management-card .role-feature { border-color:#9a3412; }
+.finance-card { --primary:#1d4ed8; background:linear-gradient(145deg,#fff 55%,#eff6ff); border-color:#1d4ed8; }
+.finance-card .role-feature { border-color:#1d4ed8; }
+.supervisor-card { background:linear-gradient(145deg,#fff 55%,#ecfeff); }
+.role-actions .btn { display:flex; align-items:center; justify-content:center; border-radius:9px; transition:transform .16s ease,box-shadow .16s ease; }
+.role-actions .btn .bi { order:-1; }
+.role-actions .btn:hover { transform:translateY(-1px); box-shadow:0 5px 12px rgb(15 23 42 / 12%); }
+.manager-dashboard { margin-bottom:24px; }
+.manager-kpi-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:14px; margin-bottom:16px; }
+.manager-kpi-card { min-height:126px; padding:16px; border:0; border-top:4px solid #9a3412; background:linear-gradient(140deg,#fff,#fff7ed); }
+.manager-kpi-card .bi { color:#9a3412; font-size:1.3rem; }
+.manager-kpi-card span { margin-top:8px; color:#5e6267; font-size:.9rem; }
+.manager-kpi-card strong { font-size:1.65rem; line-height:1.1; }
+.manager-chart-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px; margin-bottom:14px; }
+.manager-chart-card,.manager-activity-card { padding:18px; border:0; }
+.manager-chart-card h2,.manager-activity-card h2 { color:#7c2d12; }
+.manager-chart-card svg { display:block; width:100%; min-height:170px; overflow:visible; }
+.manager-activity-list { display:grid; gap:0; list-style:none; margin:0; padding:0; }
+.manager-activity-list li { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px 16px; padding:10px 0; border-bottom:1px solid #e2e8f0; }
+.manager-activity-list li:last-child { border-bottom:0; }
+.manager-activity-list span { color:#64748b; font-size:.9rem; }
+.advanced-filter-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); align-items:end; gap:10px; }
+.advanced-filter-field { display:flex; min-width:0; flex-direction:column; }
+.advanced-filter-actions { display:flex; gap:8px; align-items:end; }
+.report-center-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }
+.report-center-button { min-height:72px; border-radius:12px; font-size:1.05rem; }
+.alerts-menu { position:relative; }
+.alerts-toggle { position:relative; min-width:44px; }
+.alert-counter { position:absolute; top:-7px; right:-8px; min-width:20px; padding:1px 5px; border-radius:999px; background:#dc3545; color:#fff; font-size:.72rem; font-weight:700; line-height:1.4; }
+.alerts-panel { position:absolute; z-index:50; top:calc(100% + 10px); right:0; width:min(390px,calc(100vw - 32px)); max-height:70vh; overflow:auto; padding:16px; border:1px solid #dbe2ea; border-radius:14px; background:#fff; color:#212529; box-shadow:0 18px 45px rgb(15 23 42 / 22%); }
+.alerts-panel h2 { margin:0 0 12px; }
+.alert-group { padding:12px 0; border-top:1px solid #e2e8f0; }
+.alert-group h3 { display:flex; justify-content:space-between; gap:10px; }
+.alert-group ul { margin:0 0 10px; padding-left:20px; font-size:.9rem; }
+.alert-group li { padding-block:2px; }
+.records-filter-bar { border-radius:12px; background:linear-gradient(140deg,#f8fafc,#f1f5f9); }
+
+@media (max-width:991px) {
+ .manager-kpi-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (max-width:767px) {
+ .session-actions { align-items:center; }
+ .manager-kpi-grid { gap:8px; }
+ .manager-kpi-card { min-height:105px; padding:12px; }
+ .manager-kpi-card strong { font-size:1.35rem; }
+ .manager-chart-grid { grid-template-columns:minmax(0,1fr); }
+ .manager-chart-card,.manager-activity-card { padding:14px; }
+ .advanced-filter-grid { grid-template-columns:minmax(0,1fr); }
+ .advanced-filter-actions { align-items:stretch; }
+ .alerts-panel { right:-52px; }
+}
+@media (prefers-reduced-motion:reduce) {
+ .role-card,.role-actions .btn { transition:none; }
+ .role-card:hover,.role-actions .btn:hover { transform:none; }
+}

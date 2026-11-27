@@ -302,10 +302,16 @@ function dashboardContext(user) {
     'new': new Element('button'),
     'modules': new Element('nav'),
     'role-cards': new Element('div'),
+    'manager-dashboard': new Element('section'),
     'warehouse-actions': new Element('div'),
     'additional-actions': new Element('div'),
     'additional-modules': new Element('details'),
-    'notice': new Element('div')
+    'notice': new Element('div'),
+    'alerts-menu': new Element('div'),
+    'alerts-toggle': new Element('button'),
+    'alerts-panel': new Element('section'),
+    'alert-count': new Element('span'),
+    'alert-groups': new Element('div')
   };
   const ctx = {
     user,
@@ -319,7 +325,7 @@ function dashboardContext(user) {
     $: id => nodes[id],
     node: (tag, text, cls) => { const n = new Element(tag); if (text !== undefined) n.textContent = text; n.className = cls; return n; },
     notice: () => {},
-    api: async () => ({}),
+    api: async () => ({ count: 0, groups: [] }),
     load: async () => {},
     showForm: () => {},
     abrirOperaciones: () => {},

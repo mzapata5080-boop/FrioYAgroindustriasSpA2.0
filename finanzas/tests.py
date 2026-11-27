@@ -31,6 +31,38 @@ from .models import (
 
 
 class ContactFieldsTests(TestCase):
+    def test_cliente_rut_is_normalized_and_duplicate_edits_are_rejected(self):
+        cliente = Cliente.objects.create(
+            rut='12.345.678-5',
+            razon_social='Cliente existente',
+            telefono='123',
+            correo='cliente@ejemplo.cl',
+            direccion='Dirección',
+        )
+        unchanged = ClienteForm(instance=cliente, data={
+            'rut': '123456785',
+            'razon_social': 'Cliente actualizado',
+            'telefono': '123',
+            'correo': 'cliente@ejemplo.cl',
+            'direccion': 'Dirección',
+            'representante': '',
+            'cargo_contacto': '',
+        })
+        self.assertTrue(unchanged.is_valid(), unchanged.errors)
+        self.assertEqual(unchanged.cleaned_data['rut'], '12.345.678-5')
+
+        duplicate = ClienteForm(data={
+            'rut': '123456785',
+            'razon_social': 'Cliente duplicado',
+            'telefono': '123',
+            'correo': 'otro@ejemplo.cl',
+            'direccion': 'Otra dirección',
+            'representante': '',
+            'cargo_contacto': '',
+        })
+        self.assertFalse(duplicate.is_valid())
+        self.assertIn('rut', duplicate.errors)
+
     def test_cliente_contact_fields_are_in_form_and_api_schema(self):
         fields = ClienteForm().fields
 
@@ -140,6 +172,61 @@ class FacturaCompraDetailsTests(TestCase):
         })
         self.assertTrue(form.is_valid(), form.errors)
         self.assertEqual(form.cleaned_data['precio_unitario'], Decimal('100.50'))
+
+    def test_provider_bank_details_are_complete_when_created_or_changed(self):
+        complete = {
+            'rut': '77.123.456-9',
+            'razon_social': 'Proveedor bancarizado',
+            'giro': 'Giro',
+            'telefono': '123',
+            'email': 'pagos@ejemplo.cl',
+            'direccion': 'Dirección',
+            'encargado_pagos': '',
+            'correo_pagos': '',
+            'banco': 'Banco de Chile',
+            'tipo_cuenta': 'Corriente',
+            'numero_cuenta': '123456789',
+        }
+        self.assertTrue(ProveedorForm(data=complete).is_valid())
+
+        missing_type = {**complete, 'tipo_cuenta': ''}
+        form = ProveedorForm(data=missing_type)
+        self.assertFalse(form.is_valid())
+        self.assertIn('tipo_cuenta', form.errors)
+
+        legacy = Proveedor.objects.create(
+            rut='77.123.456-9',
+            razon_social='Proveedor histórico',
+            giro='Giro',
+            telefono='123',
+            email='pagos@ejemplo.cl',
+            direccion='Dirección',
+        )
+        historical_data = {
+            'rut': legacy.rut,
+            'razon_social': 'Proveedor histórico actualizado',
+            'giro': legacy.giro,
+            'telefono': legacy.telefono,
+            'email': legacy.email,
+            'direccion': legacy.direccion,
+            'encargado_pagos': legacy.encargado_pagos,
+            'correo_pagos': legacy.correo_pagos,
+            'banco': legacy.banco,
+            'tipo_cuenta': legacy.tipo_cuenta,
+            'numero_cuenta': legacy.numero_cuenta,
+        }
+        form = ProveedorForm(instance=legacy, data=historical_data)
+        self.assertTrue(form.is_valid(), form.errors)
+
+        changed_bank_data = {
+            **historical_data,
+            'banco': 'Banco de Chile',
+            'numero_cuenta': '123456789',
+        }
+        form = ProveedorForm(instance=legacy, data=changed_bank_data)
+        self.assertFalse(form.is_valid())
+        self.assertIn('tipo_cuenta', form.errors)
+
 
     def test_invoice_amount_must_be_positive(self):
         form = FacturaCompraForm(data={

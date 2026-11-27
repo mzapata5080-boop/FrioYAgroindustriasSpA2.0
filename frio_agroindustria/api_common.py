@@ -33,7 +33,16 @@ class CorsMiddleware:
             patch_vary_headers(response, ('Origin',))
         return response
 
-def error(message, status=400): return JsonResponse({'error': message}, status=status)
+def error(message, status=400):
+    if status == 401:
+        message = 'Su sesión ha expirado'
+    return JsonResponse({'error': message}, status=status)
+
+
+def permission_denied():
+    return error('No posee permisos para acceder', 403)
+
+
 def data(request):
     try:
         result = json.loads(request.body or '{}')

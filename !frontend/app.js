@@ -1,6 +1,8 @@
 'use strict';
 const $ = id => document.getElementById(id);
 let csrf = '', user = null, current = '', metadata = null, loadVersion = 0;
+const activeFilters = Object.create(null);
+const activeSearch = Object.create(null);
 const names = {
   trabajadores: 'Trabajadores',
   clientes: 'Clientes',
@@ -121,13 +123,84 @@ async function api(path, payload) {
     body: payload === undefined ? undefined : multipart ? payload : JSON.stringify(payload)
   });
   const body = await response.json().catch(() => ({
-    error: `Respuesta inesperada (${response.status}). Comprueba el backend y la configuración CSRF.` }));
+    error: response.status >= 500
+      ? 'Ha ocurrido un error, intente nuevamente'
+      : response.status === 403
+      ? 'No posee permisos para acceder'
+      : response.status === 401
+      ? 'Su sesión ha expirado'
+      : `Respuesta inesperada (${response.status}). Comprueba el backend y la configuración CSRF.`
+  }));
   if (!response.ok) {
     if (response.status === 401) { user = null; renderSession(); }
-    throw new Error(body.error || Object.entries(body.errors || {})
-      .map(([k, v]) => `${k}: ${v.join(' ')}`).join('\n') || 'No se pudo completar la operación.');
+    const message = response.status >= 500
+      ? 'Ha ocurrido un error, intente nuevamente'
+      : body.error || Object.entries(body.errors || {})
+      .map(([k, v]) => `${k}: ${v.join(' ')}`).join('\n') || 'No se pudo completar la operación.';
+    throw new Error(message);
   }
   return body;
+}
+
+function canExportResource(resource) {
+  if (!user) return false;
+  if (user.is_superuser) return true;
+  const role = (user.rol || '').toLowerCase();
+  if (resource === 'articulos') return true;
+  if (['clientes', 'proveedores', 'facturas'].includes(resource)) {
+    return role.includes('finanzas') || role.includes('gerencia');
+  }
+  if (resource === 'kardex') return role.includes('gerencia');
+  if (resource === 'obras') {
+    return ['gerencia', 'bodega', 'finanzas', 'supervisor', 'obras']
+      .some(name => role.includes(name));
+  }
+  if (resource === 'solicitudes') {
+    return ['gerencia', 'bodega', 'supervisor', 'obras']
+      .some(name => role.includes(name));
+  }
+  return false;
+}
+
+async function exportReport(resource, fileFormat, keys, labels) {
+  const params = new URLSearchParams(
+    Object.entries(activeFilters[resource] || {})
+      .filter(([, value]) => value !== '' && value !== null && value !== undefined)
+  );
+  params.set('q', activeSearch[resource] || '');
+  params.set('columns', JSON.stringify(keys.map(key => ({
+    key,
+    label: labels[key] || key.replaceAll('_', ' ').replace(/^./, char => char.toUpperCase())
+  }))));
+  const response = await fetch(
+    `${window.API_BASE}/reportes/${resource}/${fileFormat}/?${params.toString()}`,
+    { method: 'GET', credentials: 'include' }
+  );
+  if (!response.ok) {
+    let body = {};
+    try { body = await response.json(); } catch (_) {}
+    if (response.status === 401) {
+      user = null;
+      renderSession();
+    }
+    const message = response.status >= 500
+      ? 'Ha ocurrido un error, intente nuevamente'
+      : response.status === 403
+      ? 'No posee permisos para acceder'
+      : response.status === 401
+      ? 'Su sesión ha expirado'
+      : body.error || 'No se pudo generar el reporte.';
+    throw new Error(message);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const link = node('a');
+  link.href = url;
+  link.download = `${resource}.${fileFormat === 'pdf' ? 'pdf' : 'xlsx'}`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
 }
 
 $('back').onclick = goHome;
@@ -307,9 +380,14 @@ async function openDocumentoPagos(documento) {
   }
 }
 
-async function load(resource) {
+async function load(resource, filters = activeFilters[resource] || {}) {
   const version = ++loadVersion;
-  const response = await api(`${resource}/`);
+  activeFilters[resource] = { ...filters };
+  const query = new URLSearchParams(
+    Object.entries(activeFilters[resource]).filter(([, value]) => value !== '' && value !== null && value !== undefined)
+  );
+  const queryString = query.toString();
+  const response = await api(`${resource}/${queryString ? `?${queryString}` : ''}`);
   if (version !== loadVersion) return false;
   current = resource;
   metadata = response;
@@ -541,10 +619,11 @@ async function load(resource) {
     ? 'Buscar categoría por nombre...'
     : 'Buscar en los registros...';
   searchInput.setAttribute('aria-label', searchInput.placeholder);
+  searchInput.value = activeSearch[resource] || '';
   searchGroup.append(searchInput);
 
   let statusSelect = null;
-  if (['articulos', 'categorias'].includes(resource)) {
+  if (resource === 'categorias') {
     statusSelect = node('select');
     statusSelect.id = 'table-status-filter';
     statusSelect.className = 'form-select w-auto';
@@ -560,8 +639,72 @@ async function load(resource) {
   searchRow.append(searchGroup);
   if (statusSelect) searchRow.append(statusSelect);
   searchRow.append(countBadge);
+
+  if (canExportResource(resource)) {
+    const exportActions = node('div', undefined, 'd-flex flex-wrap gap-2');
+    for (const [fileFormat, label, icon] of [
+      ['pdf', 'Exportar PDF', 'bi-file-earmark-pdf'],
+      ['xlsx', 'Exportar Excel', 'bi-file-earmark-excel']
+    ]) {
+      const button = node('button', undefined, 'btn btn-sm btn-outline-primary');
+      button.type = 'button';
+      const glyph = node('i', undefined, `bi ${icon} me-1`);
+      glyph.setAttribute('aria-hidden', 'true');
+      button.append(glyph, document.createTextNode(label));
+      button.onclick = () => exportReport(resource, fileFormat, keys, labels)
+        .catch(error => notice(error.message, true));
+      exportActions.append(button);
+    }
+    searchRow.append(exportActions);
+  }
   filterBar.append(searchRow);
+
+  const filterFields = metadata.filter_fields || [];
+  if (filterFields.length) {
+    const advancedFilters = node('div', undefined, 'advanced-filter-grid mt-3');
+    const controls = [];
+    filterFields.forEach(field => {
+      const group = node('label', undefined, 'advanced-filter-field');
+      group.append(node('span', field.label, 'form-label mb-1'));
+      let input;
+      if (field.type === 'select') {
+        input = node('select', undefined, 'form-select form-select-sm');
+        (field.choices || []).forEach(([value, label]) => {
+          const option = node('option', label);
+          option.value = value;
+          input.append(option);
+        });
+      } else {
+        input = node('input', undefined, 'form-control form-control-sm');
+        input.type = field.type === 'date' ? 'date' : 'search';
+      }
+      input.name = field.name;
+      input.value = activeFilters[resource][field.name] || '';
+      group.append(input);
+      advancedFilters.append(group);
+      controls.push(input);
+    });
+
+    const filterActions = node('div', undefined, 'advanced-filter-actions');
+    const applyButton = node('button', 'Aplicar filtros', 'btn btn-sm btn-primary');
+    applyButton.type = 'button';
+    applyButton.onclick = () => {
+      const next = {};
+      controls.forEach(control => {
+        if (control.value) next[control.name] = control.value;
+      });
+      load(resource, next).catch(error => notice(error.message, true));
+    };
+    const clearButton = node('button', 'Limpiar', 'btn btn-sm btn-outline-secondary');
+    clearButton.type = 'button';
+    clearButton.onclick = () => load(resource, {}).catch(error => notice(error.message, true));
+    filterActions.append(applyButton, clearButton);
+    advancedFilters.append(filterActions);
+    filterBar.append(advancedFilters);
+  }
+
   container.append(filterBar);
+  searchInput.oninput = () => { activeSearch[resource] = searchInput.value; };
 
   if (!items.length) {
     container.append(node('p', resource === 'solicitudes' ? 'No hay solicitudes registradas.' : 'No hay registros.', 'text-muted'));
@@ -806,7 +949,10 @@ async function load(resource) {
     }
   }
 
-  searchInput.oninput = applyFilter;
+  searchInput.oninput = () => {
+    activeSearch[resource] = searchInput.value;
+    applyFilter();
+  };
   if (statusSelect) statusSelect.onchange = applyFilter;
 }
 

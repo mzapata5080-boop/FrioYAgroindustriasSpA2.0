@@ -13,7 +13,8 @@ def session(request):
 def sign_in(request):
     d = data(request)
     user = authenticate(request, username=d.get('username',''), password=d.get('password',''))
-    if user is None: return error('Credenciales incorrectas.',401)
+    if user is None:
+        return JsonResponse({'error': 'Usuario o contraseña incorrectos'}, status=401)
     login(request,user)
     return JsonResponse({'user':profile(user),'csrfToken':get_token(request)})
 

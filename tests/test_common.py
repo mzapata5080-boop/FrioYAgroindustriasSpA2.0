@@ -3,7 +3,8 @@ import tempfile
 from pathlib import Path
 from django.core.exceptions import ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
-from django.test import TestCase, override_settings
+from django.test import RequestFactory, TestCase, override_settings
+from frio_agroindustria.api import internal_error
 from frio_agroindustria.common import (
     open_private_file,
     registrar_cambio,
@@ -38,6 +39,14 @@ class CommonUtilitiesTests(TestCase):
                     save_private_file(bad, 'obras')
                 with self.assertRaises(FileNotFoundError):
                     open_private_file('../settings.py')
+
+    def test_internal_error_handler_uses_required_api_message(self):
+        response = internal_error(RequestFactory().get('/api/session/'))
+        self.assertEqual(response.status_code, 500)
+        self.assertEqual(
+            response.json(),
+            {'error': 'Ha ocurrido un error, intente nuevamente'},
+        )
 
     def test_audit_records_create_edit_and_delete(self):
         cat = CategoriaRepuesto.objects.create(nombre='Refrigeración')
